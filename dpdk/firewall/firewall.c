@@ -173,7 +173,6 @@ refresh_routes(struct fw_ctx *ctx)
 	if (likely(ctx->cfg->rt.gws_ts == cfg.gws_ts)) {
 		return;
 	}
-
 	rt_refresh_gws(&ctx->cfg->rt);
 }
 
@@ -297,7 +296,6 @@ fw_init(void)
 		if (zone[0] == 0) {
 			continue;
 		}
-
 		zp = get_zone_cfg(zone);
 		if (zp == NULL) {
 			strlcpy(zones[n_zones].name, zone,
@@ -316,49 +314,49 @@ fw_init(void)
 	return 0;
 }
 
-static inline struct rte_mbuf *
-handle_ip_frag(struct ipv4_hdr *hdr, struct rte_mbuf *pkt)
-{
-
-	if (!hdr || !pkt) {
-		return NULL;
-	}
-	return NULL;
-}
-
 static inline uint8_t *
-setup_ip_acl_data(struct rte_mbuf *pkt, uint8_t reassembly, struct fw_ctx *ctx)
+setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 {
-	struct ipv4_hdr *ip_hdr;
+	struct ipv4_hdr *ih;
 	uint8_t *ehp;
 
-	ehp = rte_pktmbuf_mtod(pkt, uint8_t *);
-	ip_hdr = (struct ipv4_hdr *)(ehp + sizeof(struct ether_hdr));
+	ehp = rte_pktmbuf_mtod(*m, uint8_t *);
+	ih = (struct ipv4_hdr *)(ehp + sizeof(struct ether_hdr));
 
 	/* Accept IPv4 packets with no extra options */
-	if (unlikely(PKT_IP_HDR_LEN(ip_hdr) != IP_HDR_LEN)) {
+	if (unlikely(PKT_IP_HDR_LEN(ih) != IP_HDR_LEN)) {
 		return NULL;
 	}
-
 	/* Check for fragments */
-	if (unlikely(rte_ipv4_frag_pkt_is_fragmented(ip_hdr) && reassembly)) {
+	if (unlikely(rte_ipv4_frag_pkt_is_fragmented(ih) &&
+	    ctx->cfg->rt.reassembly)) {
+		struct rte_mbuf *mo;
+
 		switch (ctx->cfg->ol) {
 		case WORKER_OL_PROV:
-			pkt->udata64 |= PKT_META_OL;
-			if (frag_ip_reass(&ctx->frag, ip_hdr, pkt) == NULL) {
+			uint64_t udata64;
+
+			*m->udata64 |= PKT_META_OL;
+			udata64 = *m->udata64;
+
+			if ((mo = frag_ip_reass(&ctx->frag, ih, *m)) == NULL) {
 				return NULL;
 			}
+			ehp = rte_pktmbuf_mtod(mo, uint8_t *);
+			*m = mo;
+			*m->udata64 = udata64;
 			break;
 		case WORKER_OL_CLNT:
-			pkt->udata64 |= PKT_META_OL;
+			*m->udata64 |= PKT_META_OL;
 			/* Offload fragment to offloader cores */
-			fwd_ol_pkt(pkt, ctx->cfg);
-			return NULL;
+			fwd_ol_pkt(*m, ctx->cfg);
+			break;
 		default:
+			RTE_LOG(WARNING, USER1, "Unknown offload type!\n");
 			break;
 		}
 
-		/* XXX: ehp must be updated here */
+		return NULL;
 	}
 	return IP_DATA_2PROTO(ehp);
 }
@@ -390,21 +388,55 @@ build_alt_ip6_hdr(struct rte_mbuf *pkt, uint32_t exthdrs, uint8_t *l4hdr,
 }
 
 static inline uint8_t *
-setup_ip6_acl_data(struct rte_mbuf *pkt)
+setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 {
 	uint8_t *l4hdr;
-	uint16_t l4proto;
 	uint32_t exthdrs;
+	uint16_t l4proto;
 
 	l4hdr = NULL;
-	exthdrs = ip6_parse_hdrs(pkt, &l4hdr, &l4proto);
+	exthdrs = ip6_parse_hdrs(*m, &l4hdr, &l4proto);
+
+	/* No extra headers */
 	if (likely(exthdrs == 0 && l4hdr != NULL)) {
-		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(pkt, uint8_t *));
-	} else {
-		uint8_t *hdr;
-		hdr = build_alt_ip6_hdr(pkt, exthdrs, l4hdr, l4proto);
-		return hdr ? hdr + IP6_OFF2PROTO : NULL;
+		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(*m, uint8_t *));
 	}
+	/* Extra headers but not a fragment */
+	if (!(exthdrs & IP6_EH_FRAGMENT)) {
+		uint8_t *ih = build_alt_ip6_hdr(*m, exthdrs, l4hdr, l4proto);
+		return ih ? ih + IP6_OFF2PROTO : NULL;
+	}
+	/* Fragment */
+	if (!ctx->cfg->rt.reassembly) {
+		return NULL;
+	}
+	switch (ctx->cfg->ol) {
+	case WORKER_OL_PROV:
+		struct rte_mbuf *mo;
+		uint64_t udata64;
+
+		*m->udata64 |= PKT_META_OL;
+		udata64 = *m->udata64;
+
+		if ((mo = frag_ip6_reass(&ctx->frag, *m)) == NULL) {
+			return NULL;
+		}
+		*m = mo;
+		*m->udata64 = udata64;
+
+		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(*m, uint8_t *));
+		break;
+	case WORKER_OL_CLNT:
+		*m->udata64 |= PKT_META_OL;
+		/* Offload fragment to offloader cores */
+		fwd_ol_pkt(*m, ctx->cfg);
+		break;
+	default:
+		RTE_LOG(WARNING, USER1, "Unknown offload type!\n");
+		break;
+	}
+
+	return NULL;
 }
 
 /*
@@ -429,43 +461,44 @@ compact_ip_acl(struct acl_ctx *acl)
 }
 
 static inline void
-setup_pkt_acl(struct rte_mbuf *pkt, struct fw_ctx *ctx)
+setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 {
+	struct rte_mbuf *mo;
 	struct acl_ctx *acl;
 	uint8_t *data;
 	uint32_t ptype;
 
 	acl = &ctx->acl;
-	ptype = PKT_TYPE(pkt);
+	ptype = PKT_TYPE(m);
 
 	if (ptype & RTE_PTYPE_L3_IPV4) {
-		data = setup_ip_acl_data(pkt, ctx->cfg->rt.reassembly, ctx);
+		data = setup_ip_acl_data(ctx, &m);
 		if (unlikely(data == NULL)) {
-			if (pkt->udata64 & PKT_META_OL) {
+			if (m->udata64 & PKT_META_OL) {
 				RTE_LOG(DEBUG, ACL, "reassembling packet");
 			} else {
-				pkt_dump(pkt, "dropping packet: ");
-				rte_pktmbuf_free(pkt);
+				pkt_dump(m, "dropping packet: ");
+				rte_pktmbuf_free(m);
 			}
 			return;
 		}
 		acl->ip_data[acl->n_ip] = data;
-		acl->ip_m[acl->n_ip] = pkt;
+		acl->ip_m[acl->n_ip] = m;
 		acl->n_ip++;
 
 	} else if (ptype & RTE_PTYPE_L3_IPV6) {
 		/* Header processing */
-		data = setup_ip6_acl_data(pkt);
+		data = setup_ip6_acl_data(ctx, &m);
 		if (unlikely(data == NULL)) {
-			rte_pktmbuf_free(pkt);
+			rte_pktmbuf_free(m);
 			return;
 		}
 		acl->ip6_data[acl->n_ip6] = data;
-		acl->ip6_m[acl->n_ip6] = pkt;
+		acl->ip6_m[acl->n_ip6] = m;
 		acl->n_ip6++;
 	} else {
 		/* We only filter IPv4 and IPv6 for now. */
-		fwd_ctrl_pkt(pkt, ctx->cfg);
+		fwd_ctrl_pkt(m, ctx->cfg);
 	}
 }
 
@@ -652,7 +685,6 @@ check_pkts(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 	if (unlikely(n_rx == 0)) {
 		return 0;
 	}
-
 #ifdef APP_STATS
 	ctx->cfg->irings_pkts[ring_n] += n_rx;
 #endif
@@ -692,7 +724,6 @@ check_pkts(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 				fwd_pkts(ctx->cfg, acl->ip_m, acl->n_ip);
 			}
 		}
-
 		/* IPv6 */
 		if (likely(acl->n_ip6)) {
 			/* Apply ACLs if required */
@@ -749,7 +780,6 @@ cron_cnt(struct fw_ctx *ctx, struct fw_cron *cron)
 		refresh_settings(ctx);
 		cron->tasks = 0;
 	}
-
 	if (APP_STATS &&
 	    (unlikely(cron->stats == APP_STATS))) {
 		uint64_t elapsed_us = TSC2US(now_tsc - cron->last_stats);
@@ -758,7 +788,6 @@ cron_cnt(struct fw_ctx *ctx, struct fw_cron *cron)
 		}
 		cron->stats = 0;
 	}
-
 	cron->flush++;
 	cron->tasks++;
 	cron->stats++;
@@ -789,10 +818,12 @@ static struct fw_ctx *
 init_ctx(struct worker_lc_cfg *lp)
 {
 	struct fw_ctx *ctx;
+	unsigned int socket;
 	char name[64];
 	size_t size;
 	int16_t n;
 
+	socket = rte_lcore_id();
 	snprintf(name, sizeof(name), "fw_wrk_%u", lp->id);
 	size = RTE_CACHE_LINE_ROUNDUP(sizeof(struct fw_ctx));
 	ctx = rte_zmalloc(name, size, RTE_CACHE_LINE_SIZE);
@@ -804,6 +835,14 @@ init_ctx(struct worker_lc_cfg *lp)
 	lp->fw.ctx = ctx;
 	lp->rt.ovlan = cfg.ovlan;
 
+	/* Allocate required structures for offload providers */
+	if (lp->ol == WORKER_OL_PROV) {
+		if (frag_init(&ctx->frag, cfg.ol_pools[socket],
+		    cfg.frag_max_flow_num, cfg.frag_max_flow_ttl) != 0) {
+			rte_panic("Could initialize fragmentation context. "
+			    "Shutting down...\n");
+		}
+	}
 	n = rte_atomic16_add_return(&n_workers, 1) - 1;
 	workers[n] = ctx;
 

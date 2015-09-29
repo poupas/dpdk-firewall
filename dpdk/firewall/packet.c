@@ -131,20 +131,13 @@ pkt_ip_hdr(struct rte_mbuf *m, const uint8_t *data)
 	return (const struct ipv4_hdr *)(data + sizeof(struct ether_hdr));
 }
 
-static void
-mac_to_str(uint8_t *mac, char *dst, size_t dsiz)
-{
-	snprintf(dst, dsiz, "%02x:%02x:%02x:%02x:%02x:%02x",
-	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
-
 void
 pkt_dump(const struct rte_mbuf *m, const char *prefix)
 {
 	struct ether_hdr *eh;
 	uint8_t *data, proto;
 	char saddr[INET6_ADDRSTRLEN], daddr[INET6_ADDRSTRLEN];
-	char smac[20], dmac[20];
+	char smac[ETHER_ADDR_FMT_SIZE], dmac[ETHER_ADDR_FMT_SIZE];
 
 	data = rte_pktmbuf_mtod(m, uint8_t *);
 	eh = (struct ether_hdr *)data;
@@ -162,8 +155,8 @@ pkt_dump(const struct rte_mbuf *m, const char *prefix)
 		inet_ntop(AF_INET6, &ip->dst_addr, daddr, sizeof(daddr));
 		proto = ip->proto;
 	}
-	mac_to_str((uint8_t *)&eh->s_addr, smac, sizeof(smac));
-	mac_to_str((uint8_t *)&eh->d_addr, dmac, sizeof(dmac));
+	ether_format_addr(smac, sizeof(smac), &eh->s_addr);
+	ether_format_addr(dmac, sizeof(dmac), &eh->d_addr);
 
 	RTE_LOG(DEBUG, USER1,
 	    "%s iface: %d. vlan: %u, etype: 0x%02x%02x, "

@@ -195,14 +195,6 @@ init_ol_mbuf_pools(void)
 			    socket, strerror(rte_errno));
 		}
 	}
-
-	for (lcore = 0; lcore < MAX_LCORES; lcore++) {
-		if (cfg.lcores[lcore].type == LCORE_TYPE_NONE) {
-			continue;
-		}
-		socket = rte_lcore_to_socket_id(lcore);
-		cfg.lcores[lcore].pool = cfg.pools[socket];
-	}
 }
 
 static void

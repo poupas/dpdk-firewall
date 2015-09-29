@@ -686,14 +686,11 @@ parse_routing(config_setting_t * rt)
 	}
 	cfg.ovlan = vlan;
 
-	/*
-	 * TODO:
-	 * 
-	 * config_lookup_int(_cfg, "frag_max_flow_num", (int
-	 * *)&cfg.frag_max_flow_num); config_lookup_int(_cfg,
-	 * "frag_max_flow_ttl", (int *)&cfg.frag_max_flow_ttl);
-	 * 
-	 */
+	 config_lookup_int(
+	    rt, "frag_max_flow_num", (int *)&cfg.frag_max_flow_num);
+
+	 config_lookup_int(
+	    rt, "frag_max_flow_ttl", (int *)&cfg.frag_max_flow_ttl);
 
 	return 0;
 };

@@ -47,19 +47,26 @@
 #define	IP_FRAG_TBL_BUCKET_ENTRIES 16
 
 int
-frag_init(struct frag_ctx *ctx)
+frag_init(struct frag_ctx *ctx, struct rte_mempool *pool, uint16_t flows,
+    uint16_t ttl)
 {
-	if (!ctx) return -1;
+	uint64_t frag_cycles;
+	unsigned int socket;
+
+	socket = rte_lcore_id();
+	frag_cycles = (rte_get_tsc_hz() + MS_PER_S - 1) / MS_PER_S * ttl;
+
+	ctx->tbl = rte_ip_frag_table_create(
+	    flows,
+	    IP_FRAG_TBL_BUCKET_ENTRIES,
+	    flows,
+	    frag_cycles,
+	    socket);
+	if (ctx->tbl == NULL) {
+		RTE_LOG(ERR, USER1, "Could not create fragment table!\n");
+		return -1;
+	}
+	ctx->pool = pool;
 
 	return 0;
-
-}
-
-struct rte_mbuf *
-frag_ip_reass(struct frag_ctx *ctx, struct ipv4_hdr *hdr,
-    struct rte_mbuf *m)
-{
-	if (!ctx || !hdr || !m) return NULL;
-
-	return NULL;
 }
