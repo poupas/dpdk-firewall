@@ -336,7 +336,7 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 		case WORKER_OL_PROV:
 			uint64_t udata64;
 
-			*m->udata64 |= PKT_META_OL;
+			*m->udata64 |= PKT_META_OL_IP;
 			udata64 = *m->udata64;
 
 			if ((mo = frag_ip_reass(&ctx->frag, ih, *m)) == NULL) {
@@ -347,7 +347,7 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 			*m->udata64 = udata64;
 			break;
 		case WORKER_OL_CLNT:
-			*m->udata64 |= PKT_META_OL;
+			*m->udata64 |= PKT_META_OL_IP;
 			/* Offload fragment to offloader cores */
 			fwd_ol_pkt(*m, ctx->cfg);
 			break;
@@ -415,7 +415,7 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 		struct rte_mbuf *mo;
 		uint64_t udata64;
 
-		*m->udata64 |= PKT_META_OL;
+		*m->udata64 |= PKT_META_OL_IP6;
 		udata64 = *m->udata64;
 
 		if ((mo = frag_ip6_reass(&ctx->frag, *m)) == NULL) {
@@ -427,7 +427,7 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(*m, uint8_t *));
 		break;
 	case WORKER_OL_CLNT:
-		*m->udata64 |= PKT_META_OL;
+		*m->udata64 |= PKT_META_OL_IP6;
 		/* Offload fragment to offloader cores */
 		fwd_ol_pkt(*m, ctx->cfg);
 		break;
@@ -490,7 +490,12 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 		/* Header processing */
 		data = setup_ip6_acl_data(ctx, &m);
 		if (unlikely(data == NULL)) {
-			rte_pktmbuf_free(m);
+			if (m->udata64 & PKT_META_OL) {
+				RTE_LOG(DEBUG, ACL, "reassembling packet");
+			} else {
+				pkt_dump(m, "dropping packet: ");
+				rte_pktmbuf_free(m);
+			}
 			return;
 		}
 		acl->ip6_data[acl->n_ip6] = data;

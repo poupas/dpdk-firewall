@@ -100,9 +100,9 @@ nat_ip_4pkts(struct rte_mbuf *m[4], struct rte_hash *ht, uint32_t *ipaddrs,
 	rte_hash_lookup_multi(ht, (const void **)&addrs[0], 4, ret);
 
 	nat_ip_addr(addrs[0], ret[0], ipaddrs);
-	nat_ip_addr(addrs[0], ret[1], ipaddrs);
-	nat_ip_addr(addrs[0], ret[2], ipaddrs);
-	nat_ip_addr(addrs[0], ret[3], ipaddrs);
+	nat_ip_addr(addrs[1], ret[1], ipaddrs);
+	nat_ip_addr(addrs[2], ret[2], ipaddrs);
+	nat_ip_addr(addrs[3], ret[3], ipaddrs);
 
 	PKT_IP_TX_OFFLOAD(m[0]);
 	PKT_IP_TX_OFFLOAD(m[1]);

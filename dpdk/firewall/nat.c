@@ -58,7 +58,7 @@ init_ip_nat(struct zone_cfg *zone)
 	struct rte_hash_parameters ip_nat_params = {
 		.name = NULL,
 		.entries = MAX_NAT_ENTRIES,
-		.key_len = sizeof(uint32_t),
+		.key_len = sizeof(struct in_addr),
 		.hash_func = ip_hash_crc,
 		.hash_func_init_val = 0,
 	};

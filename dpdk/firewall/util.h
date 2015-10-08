@@ -37,11 +37,14 @@
 
 #include <rte_ring.h>
 #include <rte_lcore.h>
+#include <rte_cycles.h>
 
 #include "strutil.h"
 
 #define US2TSC(x) (tsc_per_us * (x))
 #define TSC2US(x) ((x) / tsc_per_us)
+
+#define US2S(x) (x / US_PER_S)
 
 #define container_of(ptr, type, member) ({			\
 	const typeof(((type *)0)->member) *__mptr = (ptr);	\

@@ -142,10 +142,12 @@ struct ether_arp {
 /*
  * Packet metadata
  */
-#define PKT_META_OL		(1 << 1)
-#define PKT_META_ROUTED		(1 << 2)
-#define PKT_META_LOCAL		(1 << 3)
-#define PKT_META_VLAN_TAG	(1 << 4)
+#define PKT_META_OL_IP		(1 << 1)
+#define PKT_META_OL_IP6		(1 << 2)
+#define PKT_META_OL		(PKT_META_OL_IP|PKT_META_OL_IP6)
+#define PKT_META_ROUTED		(1 << 3)
+#define PKT_META_LOCAL		(1 << 4)
+#define PKT_META_VLAN_TAG	(1 << 5)
 
 /*
  * SCTP
@@ -234,6 +236,14 @@ struct vlan_ethhdr {
 	:							\
 		0)						\
 
+#define PKT_ETH_ADDR_SWAP(hdr)					\
+	do {							\
+		struct ether_addr addr;				\
+		ether_addr_copy(&hdr->s_addr, &addr);		\
+		ether_addr_copy(&hdr->d_addr, &hdr->s_addr);	\
+		ether_addr_copy(&addr, &hdr->s_addr);		\
+	} while (0)
+
 /*
  * We only need this if the NIC does not set the packet type.
  * This is the case with e1000 cards.
@@ -266,6 +276,19 @@ ip_hash_crc(const void *data, __rte_unused uint32_t datalen, uint32_t initval)
 	initval = rte_hash_crc_4byte(*ip, initval);
 #else	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
 	initval = rte_jhash_1word(*ip, initval);
+#endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+
+	return initval;
+}
+
+static inline uint32_t
+ip6_hash_crc(const void *data, __rte_unused uint32_t datalen, uint32_t initval)
+{
+
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+	initval = rte_hash_crc(data, sizeof(struct in6_addr), initval);
+#else	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+	initval = rte_jhash(data, sizeof(struct in6_addr), initval);
 #endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
 
 	return initval;
