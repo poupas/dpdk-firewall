@@ -40,13 +40,13 @@
 #define HASH_TTL_US 60 * US_PER_S
 
 struct transient_hash {
-    struct rte_hash *h;
-    uint64_t ttl;
+	struct rte_hash *h;
+	uint64_t ttl;
 };
 
 struct rollhash {
-    struct transient_hash cur;
-    struct transient_hash old;
+	struct transient_hash cur;
+	struct transient_hash old;
 };
 
 
@@ -78,10 +78,11 @@ rh_fbk_create(struct rollhash *rh, struct rte_fbk_hash_params *p)
 
 done:
 	if (rc < 0) {
-		if (tables[0] != NULL) rte_fbk_hash_free(tables[0]);
-		if (tables[1] != NULL) rte_fbk_hash_free(tables[1]);
+		if (tables[0] != NULL)
+			rte_fbk_hash_free(tables[0]);
+		if (tables[1] != NULL)
+			rte_fbk_hash_free(tables[1]);
 	}
-
 	return rc;
 }
 
@@ -113,10 +114,11 @@ rh_create(struct rollhash *rh, struct rte_hash_parameters *p)
 
 done:
 	if (rc < 0) {
-		if (tables[0] != NULL) rte_hash_free(tables[0]);
-		if (tables[1] != NULL) rte_hash_free(tables[1]);
+		if (tables[0] != NULL)
+			rte_hash_free(tables[0]);
+		if (tables[1] != NULL)
+			rte_hash_free(tables[1]);
 	}
-
 	return rc;
 }
 
@@ -132,12 +134,10 @@ rh_add_key_data(struct rollhash *rh, const void *key, void *data,
 		rh->cur.ttl = now_us + HASH_TTL_US;
 		return rc;
 	}
-
 	/* Check if previous hash table may still have valid entries */
 	if (unlikely(rh->old.ttl < now_us)) {
 		return rc;
 	}
-
 	/* Roll-over hashtables */
 	tmp = rh->cur.h;
 
@@ -162,7 +162,6 @@ rh_lookup_data(struct rollhash *rh, const void *key, void **data)
 	if (rc >= 0) {
 		return rc;
 	}
-
 	return rte_hash_lookup_data(rh->old.h, key, data);
 }
 

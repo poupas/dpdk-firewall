@@ -78,14 +78,12 @@ __attribute__((always_inline))
 		}
 		ether_addr_copy(ea, &eh->d_addr);
 	}
-
 	port = m->port;
 
 	/* Request the NIC to place the vlan tag if required */
 	if (likely((m->udata64 & PKT_META_VLAN_TAG) == 0)) {
 		m->ol_flags |= PKT_TX_VLAN_PKT;
 	}
-
 	burst = cfg.worker_write_burst_size;
 	n_mbufs = lp->obuf[port].n_mbufs;
 	lp->obuf[port].array[n_mbufs++] = m;
@@ -111,7 +109,7 @@ static inline
 __attribute__((always_inline))
 	void
 	     fwd_ring_pkt(struct rte_mbuf *m, struct worker_lc_cfg *lp,
-			   struct wrk_ring *ring)
+         struct wrk_ring *ring)
 {
 	uint32_t n_mbufs, burst;
 	int ret;
@@ -125,7 +123,6 @@ __attribute__((always_inline))
 		lp->pending = 1;
 		return;
 	}
-
 	ret = rte_ring_sp_enqueue_bulk(
 	    ring->ring,
 	    (void **)ring->obuf.array,
@@ -176,7 +173,6 @@ flush_nic_buffers(struct worker_lc_cfg *lp)
 		if (unlikely(lp->orings[i] == NULL)) {
 			continue;
 		}
-
 		if (likely(lp->obuf_flush[i] == 0 ||
 		    lp->obuf[i].n_mbufs == 0)) {
 			lp->obuf_flush[i] = 1;
@@ -199,8 +195,8 @@ flush_ctrl_buffers(struct worker_lc_cfg *lp)
 
 		if (likely(ring->obuf_flush == 0 ||
 		    ring->obuf.n_mbufs == 0)) {
-		    ring->obuf_flush = 1;
-		    continue;
+			ring->obuf_flush = 1;
+			continue;
 		}
 		util_flush_sp_ring_buffer(ring->ring, &ring->obuf);
 		ring->obuf_flush = 1;
@@ -218,8 +214,8 @@ flush_ol_buffers(struct worker_lc_cfg *lp)
 
 		if (likely(ring->obuf_flush == 0 ||
 		    ring->obuf.n_mbufs == 0)) {
-		    ring->obuf_flush = 1;
-		    continue;
+			ring->obuf_flush = 1;
+			continue;
 		}
 		util_flush_sp_ring_buffer(ring->ring, &ring->obuf);
 		ring->obuf_flush = 1;

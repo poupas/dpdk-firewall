@@ -100,7 +100,6 @@ parse_worker_lcores(config_setting_t * w_lcores)
 		RTE_LOG(ERR, USER1,
 		    "Could not parse worker lcores. Error: %d.\n", ret);
 	}
-
 	return ret;
 }
 
@@ -199,7 +198,6 @@ parse_rx_lcore(config_setting_t * rxst, uint32_t id)
 		RTE_LOG(DEBUG, USER1, "Workers must be a power of two.\n");
 		return -7;
 	}
-
 	for (i = 0; i < count; i++) {
 		int worker = config_setting_get_int_elem(setting, i);
 		/* TODO: sanitize 'worker' value */
@@ -540,7 +538,7 @@ cfg_lcores_worker(void)
 }
 
 static int
-parse_bond(int port, config_setting_t *slaves)
+parse_bond(int port, config_setting_t * slaves)
 {
 	int i, count;
 
@@ -548,7 +546,6 @@ parse_bond(int port, config_setting_t *slaves)
 	if (count < 1 || count > MAX_NIC_PORTS - 1) {
 		return -1;
 	}
-
 	for (i = 0; i < count; i++) {
 		int slave;
 
@@ -566,7 +563,7 @@ parse_bond(int port, config_setting_t *slaves)
 }
 
 static int
-parse_ifaces(config_setting_t *ifaces)
+parse_ifaces(config_setting_t * ifaces)
 {
 	int i, count;
 	if (ifaces == NULL) {
@@ -591,19 +588,16 @@ parse_ifaces(config_setting_t *ifaces)
 		if (port < 0 || port >= MAX_NIC_PORTS) {
 			return -3;
 		}
-
 		bond = config_setting_get_member(nic, "bond");
 		if (bond && !parse_bond(port, bond)) {
 			return -4;
 		}
-
 		config_setting_lookup_string(nic, "zone", &zone);
 		config_setting_lookup_bool(nic, "reverse", &reverse);
 
 		if (reverse) {
 			cfg.ifaces[port].flags |= NIC_FLAG_REVERSE;
 		}
-
 		snprintf(cfg.ifaces[port].zone, sizeof(cfg.ifaces[port].zone),
 		    "%s%s", zone, reverse ? "_rev" : "");
 	}
@@ -686,10 +680,10 @@ parse_routing(config_setting_t * rt)
 	}
 	cfg.ovlan = vlan;
 
-	 config_lookup_int(
+	config_lookup_int(
 	    rt, "frag_max_flow_num", (int *)&cfg.frag_max_flow_num);
 
-	 config_lookup_int(
+	config_lookup_int(
 	    rt, "frag_max_flow_ttl", (int *)&cfg.frag_max_flow_ttl);
 
 	return 0;

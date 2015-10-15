@@ -70,11 +70,13 @@
 #endif
 
 #ifndef LCORE_WORKER_FLUSH_US
-#define LCORE_WORKER_FLUSH_US 100 /* Drain queues every 100 microseconds */
+#define LCORE_WORKER_FLUSH_US 100	/* Drain queues every 100
+					 * microseconds */
 #endif
 
 #ifndef LCORE_WORKER_TASKS_US
-#define LCORE_WORKER_TASKS_US 5 * US_PER_S /* Perform tasks every 5 seconds */
+#define LCORE_WORKER_TASKS_US 5 * US_PER_S	/* Perform tasks every 5
+						 * seconds */
 #endif
 
 #ifndef LCORE_CTRL_TASKS_US
@@ -129,7 +131,7 @@
 
 #define TASK_REFRESH_ARP_US	1 * US_PER_S
 #define TASK_REFRESH_VLANS_US	10 * US_PER_S
-#define TASK_NEGO_LACP_US 	25 * US_PER_S / MS_PER_S /* Every 25 ms */
+#define TASK_NEGO_LACP_US 	25 * US_PER_S / MS_PER_S	/* Every 25 ms */
 #define TASK_STATS_US		5 * US_PER_S
 #define TASK_KNI_US		1 * US_PER_S
 
@@ -142,7 +144,6 @@ idle_heuristic(uint32_t idle)
 	if (likely(idle < IDLE_COUNT_CHK)) {
 		return;
 	}
-
 	if (idle < IDLE_COUNT_SOFT) {
 		rte_delay_us(idle);
 	} else if (idle >= IDLE_COUNT_SOFT && idle < IDLE_COUNT_HARD) {

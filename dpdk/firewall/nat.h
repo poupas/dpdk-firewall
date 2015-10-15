@@ -72,7 +72,6 @@ nat_ip_pkt(struct rte_mbuf *m, struct rte_hash *ht, uint32_t *ipaddrs,
 	if (unlikely(addr == NULL)) {
 		return;
 	}
-
 	ret = rte_hash_lookup(ht, addr);
 	nat_ip_addr(addr, ret, ipaddrs);
 	PKT_IP_TX_OFFLOAD(m);

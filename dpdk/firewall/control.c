@@ -114,7 +114,6 @@ flush_kni(struct worker_lc_cfg *lp, struct ctrl_cron *cron)
 	if (likely(lp->type != ktype || now_tsc < cron->kni)) {
 		return;
 	}
-
 	for (i = 0; i < lp->kni.n_kni; i++) {
 		rte_kni_handle_request(lp->kni.kni[i]);
 	}
@@ -136,7 +135,6 @@ run_tasks(struct worker_lc_cfg *lp, struct ctrl_cron *cron)
 		fw_reload();
 		reload_fw = 0;
 	}
-
 	if (unlikely(dump_fw_counters)) {
 		fw_dump_counters();
 		dump_fw_counters = 0;
@@ -176,12 +174,10 @@ ctrl_lcore_main_loop(struct worker_lc_cfg *lp)
 			run_tasks(lp, &cron);
 			cron.next = now_tsc + US2TSC(LCORE_CTRL_TASKS_US);
 		}
-
 		/* Forward received packets to kernel */
 		if (fwd_pkts_to_kernel(lp, burst)) {
 			idle = 0;
 		}
-
 		/* Forward kernel packets to NIC ports */
 		if (fwd_pkts_to_nic(lp, burst)) {
 			idle = 0;

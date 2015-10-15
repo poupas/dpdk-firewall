@@ -43,4 +43,3 @@ util_free_mbufs_burst(struct rte_mbuf **pkts, unsigned count)
 		rte_pktmbuf_free(pkts[i]);
 	}
 }
-

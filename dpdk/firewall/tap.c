@@ -88,7 +88,6 @@ tap_create(const char *name, struct nic_cfg *nic)
 	if ((ret = ioctl(fd, TUNSETIFF, &ifr)) < 0) {
 		goto done;
 	}
-
 	/* Set the mac address of the tap interface */
 	ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
 	ether_addr_copy(&nic->hwaddr,
@@ -96,7 +95,6 @@ tap_create(const char *name, struct nic_cfg *nic)
 	if ((ret = ioctl(fd, SIOCSIFHWADDR, &ifr) < 0)) {
 		goto done;
 	}
-
 	/* Make room for the vlan tag */
 	if ((ret = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
 		goto done;
@@ -107,23 +105,19 @@ tap_create(const char *name, struct nic_cfg *nic)
 	if ((ret = ioctl(sock, SIOCSIFMTU, &ifr)) < 0) {
 		goto done;
 	}
-
 	/* Bring the interface up */
 	ifr.ifr_flags = flags | IFF_UP;
 	if ((ret = ioctl(sock, SIOCSIFFLAGS, &ifr)) < 0) {
 		goto done;
 	}
-
 done:
 	if (sock >= 0) {
 		close(sock);
 	}
-
 	if (ret < 0 && fd >= 0) {
 		close(fd);
 		fd = -1;
 	}
-
 	return fd;
 }
 
@@ -167,7 +161,6 @@ tap_fwd_pkts_to_kernel(struct worker_lc_cfg *lp, uint32_t burst)
 			if (arp_chk_gw_pkt(m, now_tsc)) {
 				cfg.gws_ts = now_tsc;
 			}
-
 			/*
 			 * The pkt_tag_vlan may change the packet by adding a
 			 * vlan header

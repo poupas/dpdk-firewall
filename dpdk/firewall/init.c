@@ -89,6 +89,7 @@
 struct rte_eth_conf port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
+		.max_rx_pkt_len = ETHER_MAX_LEN,
 		.split_hdr_size = 0,
 		.header_split = 0,	/**< Header Split disabled */
 		.hw_ip_checksum = 1,	/**< IP checksum offload enabled */
@@ -541,17 +542,15 @@ init_bond_slaves(uint8_t port)
 		if (ret < 0) {
 			rte_panic("Slave %d config error (%d)\n", slave, ret);
 		}
-
 		/* Initialize RX queue */
 		RTE_LOG(DEBUG, USER1, "Initializing slave %d RX queue %d ...\n",
-			    slave, 0);
-		ret = rte_eth_rx_queue_setup(slave, 0,  cfg.nic_rx_ring_size,
+		    slave, 0);
+		ret = rte_eth_rx_queue_setup(slave, 0, cfg.nic_rx_ring_size,
 		    socket, NULL, pool);
 		if (ret < 0) {
 			rte_panic("Cannot init RX queue %d on slave %d (%d)\n",
 			    0, slave, ret);
 		}
-
 		/* Initialize TX queue */
 		RTE_LOG(DEBUG, USER1, "Initializing slave %d TX queue 0...\n",
 		    slave);
@@ -569,10 +568,9 @@ init_bond_slaves(uint8_t port)
 		    txconf);
 
 		if (ret < 0) {
-			rte_panic( "Cannot init TX queue 0 on slave %d (%d)\n",
+			rte_panic("Cannot init TX queue 0 on slave %d (%d)\n",
 			    slave, ret);
 		}
-
 		/* Start the port */
 		ret = rte_eth_dev_start(slave);
 		if (ret < 0) {
@@ -605,7 +603,6 @@ init_ifaces(void)
 		    (cfg.ifaces[port].flags & NIC_FLAG_BOND_SLAVE)) {
 			continue;
 		}
-
 		if (cfg.ifaces[port].flags & NIC_FLAG_BOND_IFACE) {
 			char name[MAX_NIC_LEN];
 			int r;
@@ -619,13 +616,11 @@ init_ifaces(void)
 			if (r != port) {
 				rte_panic("bond id != port. Deal with this.\n");
 			}
-
 			if (!init_bond_slaves(port)) {
 				rte_panic("Could not init bond slaves for %d.\n",
 				    port);
 			}
 		}
-
 		/* Init port */
 		RTE_LOG(DEBUG, USER1, "Initializing NIC port %d...\n", port);
 		ret = rte_eth_dev_configure(
@@ -637,7 +632,6 @@ init_ifaces(void)
 		if (ret < 0) {
 			rte_panic("Cannot init NIC port %d (%d)\n", port, ret);
 		}
-
 		/* Init RX queues */
 		for (queue = 0; queue < MAX_RX_QUEUES_PER_NIC_PORT; queue++) {
 			if (cfg.ifaces[port].rx_queues[queue] == 0) {
@@ -689,7 +683,6 @@ init_ifaces(void)
 				    port, ret);
 			}
 		}
-
 		/* Add slave interfaces to bond */
 		if (cfg.ifaces[port].flags & NIC_FLAG_BOND_IFACE) {
 			int i;
@@ -707,9 +700,8 @@ init_ifaces(void)
 					    i);
 				}
 			}
-			// rte_eth_promiscuous_enable(port);
+			//rte_eth_promiscuous_enable(port);
 		}
-
 		/* Start port */
 		ret = rte_eth_dev_start(port);
 		if (ret < 0) {
@@ -749,7 +741,6 @@ init_tap(void)
 			if ((port = taplcp->tap_to_port[tap]) == -1) {
 				continue;
 			}
-
 			snprintf(tapname, sizeof(tapname), "mitra%u", tap);
 			tapfd = tap_create(tapname, &cfg.ifaces[port]);
 			if (tapfd < 0) {

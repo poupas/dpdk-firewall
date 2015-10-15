@@ -37,7 +37,7 @@
 
 #include "rollhash.h"
 
-#define CIPHER_ALGO		(EVP_aes_128_cbc())
+#define CIPHER_ALGO		(EVP_aes_128_ecb())
 #define CIPHER_KEY_SIZE 	16
 #define CIPHER_BLOCK_SIZE	16
 

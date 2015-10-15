@@ -74,7 +74,7 @@ pkt_type(struct rte_mbuf *m)
 			etype = _ntohs(*(&eth_hdr->ether_type + 2));
 			break;
 		default:
-			// RTE_LOG(WARNING, USER1, "Unknown: 0x%.4x\n", etype);
+			//RTE_LOG(WARNING, USER1, "Unknown: 0x%.4x\n", etype);
 			return m->packet_type;
 		}
 	}
@@ -200,6 +200,5 @@ pkt_add_vlan_hdr(struct rte_mbuf *m)
 		m->pkt_len += sizeof(struct vlan_hdr);
 		size += sizeof(struct vlan_hdr);
 	}
-
 	return size;
 }

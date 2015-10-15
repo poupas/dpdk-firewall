@@ -213,7 +213,6 @@ flush_rx_buffers(struct io_lc_cfg *lp, uint32_t n_workers)
 			util_free_mbufs_burst(lp->rx.obuf[worker].array,
 			    lp->rx.obuf[worker].n_mbufs);
 		}
-
 		lp->rx.obuf[worker].n_mbufs = 0;
 		lp->rx.obuf_flush[worker] = 1;
 	}
@@ -244,7 +243,6 @@ tx_nic_pkts(struct io_lc_cfg *lp, uint32_t n_workers,
 			if (unlikely(n_pkts == 0)) {
 				continue;
 			}
-
 			is_active = 1;
 			n_mbufs += n_pkts;
 
@@ -253,7 +251,6 @@ tx_nic_pkts(struct io_lc_cfg *lp, uint32_t n_workers,
 				lp->tx.obuf[port].n_mbufs = n_mbufs;
 				continue;
 			}
-
 			n_pkts = rte_eth_tx_burst(
 			    port,
 			    0,
@@ -302,7 +299,6 @@ flush_tx_buffers(struct io_lc_cfg *lp)
 			lp->tx.obuf_flush[port] = 1;
 			continue;
 		}
-
 		FLUSH_TX_PORT(lp, port, n_pkts);
 #ifdef APP_STATS
 		lp->tx.nic_pkts[port] += n_pkts;
@@ -321,7 +317,6 @@ rx_stats(struct io_lc_cfg *lp, uint64_t now)
 		if (lp->rx.nic_q_pkts[0] == 0) {
 			continue;
 		}
-
 		pps = lp->rx.nic_q_pkts[i] /
 		    (TSC2US(now - lp->stats_tsc) / US_PER_S);
 		lp->rx.nic_q_pkts[i] = 0;
@@ -338,7 +333,6 @@ rx_stats(struct io_lc_cfg *lp, uint64_t now)
 		if (lp->rx.rings_pkts[0] == 0) {
 			continue;
 		}
-
 		pps = lp->rx.rings_pkts[i] /
 		    (TSC2US(now - lp->stats_tsc) / US_PER_S);
 		lp->rx.rings_pkts[i] = 0;
@@ -357,7 +351,6 @@ tx_stats(struct io_lc_cfg *lp, uint64_t now)
 	if (unlikely(lp->tx.n_nic_ports == 0)) {
 		return;
 	}
-
 	if (now) {
 		;
 	}
@@ -399,7 +392,6 @@ io_lcore_main_loop(__attribute__((unused)) void *arg)
 			}
 			i = 0;
 		}
-
 		if (APP_STATS && unlikely(stats == APP_STATS)) {
 			uint64_t now = now_tsc;
 			uint64_t elapsed_us = TSC2US(now - lp->stats_tsc);
@@ -410,7 +402,6 @@ io_lcore_main_loop(__attribute__((unused)) void *arg)
 			}
 			stats = 0;
 		}
-
 		if (likely(lp->rx.n_nic_queues > 0)) {
 			if (rx_nic_pkts(lp, n_wrks_rx, rx_r_burst, rx_w_burst)) {
 				idle = 0;

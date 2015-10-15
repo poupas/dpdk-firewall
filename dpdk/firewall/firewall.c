@@ -48,6 +48,7 @@
 #include "nat.h"
 #include "ip6.h"
 #include "frag.h"
+#include "synauth.h"
 
 /*
  * BATCH_SIZE must be a power of 2.
@@ -73,6 +74,7 @@ struct fw_ctx {
 	struct acl_ctx acl;
 	struct acl_counter counters[MAX_ZONES][MAX_ACL_COUNTERS];
 	struct frag_ctx frag;
+	struct synauth_ctx sauth;
 
 	struct worker_lc_cfg *cfg;
 
@@ -323,7 +325,12 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 	ehp = rte_pktmbuf_mtod(*m, uint8_t *);
 	ih = (struct ipv4_hdr *)(ehp + sizeof(struct ether_hdr));
 
-	/* Accept IPv4 packets with no extra options */
+	/*
+	 * Accept only IPv4 packets with no extra options.
+	 *
+	 * It is assumed that the size of an IPv4 header is 20 bytes.
+	 * Stuff will break if IP options are allowed.
+	 */
 	if (unlikely(PKT_IP_HDR_LEN(ih) != IP_HDR_LEN)) {
 		return NULL;
 	}
@@ -332,6 +339,7 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 	    ctx->cfg->rt.reassembly)) {
 		struct rte_mbuf *mo;
 
+		ehp = NULL;
 		switch (ctx->cfg->ol) {
 		case WORKER_OL_PROV:
 			uint64_t udata64;
@@ -340,7 +348,7 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 			udata64 = *m->udata64;
 
 			if ((mo = frag_ip_reass(&ctx->frag, ih, *m)) == NULL) {
-				return NULL;
+				break;
 			}
 			ehp = rte_pktmbuf_mtod(mo, uint8_t *);
 			*m = mo;
@@ -356,32 +364,39 @@ setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 			break;
 		}
 
-		return NULL;
 	}
-	return IP_DATA_2PROTO(ehp);
+
+	return ehp ? IP_DATA_2PROTO(ehp) : NULL;
 }
 
 static inline uint8_t *
-build_alt_ip6_hdr(struct rte_mbuf *pkt, uint32_t exthdrs, uint8_t *l4hdr,
+build_alt_ip6_hdr(struct rte_mbuf *m, uint32_t exthdrs, uint8_t *l4hdr,
     uint16_t l4proto)
 {
-	uint8_t *hdr, *althdr;
+	struct pkt_meta *meta;
+	uint8_t *althdr, *hdr;
 
-	hdr = rte_pktmbuf_mtod(pkt, uint8_t *);
-	althdr = hdr + pkt->data_len;
+	hdr = rte_pktmbuf_mtod(m, uint8_t *);
+	althdr = NULL;
+	meta = (struct pkt_meta *)(hdr + m->data_len);
+
 	hdr += ETH_HEAD_OFF;
 
 	if (l4hdr != NULL) {
+		m->udata64 |= PKT_META_ALT_HDR;
+		meta->l4hdr = l4hdr;
+		althdr = meta->hdrs;
 		rte_memcpy(althdr, hdr, sizeof(struct ipv6_hdr));
 		rte_memcpy(althdr + sizeof(struct ipv6_hdr), l4hdr, L4_HDR_LEN);
-		((struct ipv6_hdr *)althdr)->proto = l4proto;
+		((struct ipv6_hdr *)meta->hdrs)->proto = l4proto;
 	} else if (exthdrs & IP6_EH_FRAGMENT) {
+		m->udata64 |= PKT_META_ALT_HDR;
+		meta->l4hdr = NULL;
+		althdr = meta->hdrs;
 		rte_memcpy(althdr, hdr, sizeof(struct ipv6_hdr));
 		((struct ipv6_hdr *)althdr)->proto = IPPROTO_FRAGMENT;
 	} else if ((exthdrs & IP6_EH_INVALID) == 0) {	/* Ext header found */
 		althdr = hdr;
-	} else {
-		althdr = NULL;
 	}
 
 	return althdr;
@@ -408,6 +423,7 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 	}
 	/* Fragment */
 	if (!ctx->cfg->rt.reassembly) {
+		/* XXX: use fake header to filter fragment? */
 		return NULL;
 	}
 	switch (ctx->cfg->ol) {
@@ -424,7 +440,7 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 		*m = mo;
 		*m->udata64 = udata64;
 
-		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(*m, uint8_t *));
+		return setup_ip6_acl_data(m, ctx);
 		break;
 	case WORKER_OL_CLNT:
 		*m->udata64 |= PKT_META_OL_IP6;
@@ -485,6 +501,7 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 		acl->ip_data[acl->n_ip] = data;
 		acl->ip_m[acl->n_ip] = m;
 		acl->n_ip++;
+		m->udata64 |= PKT_META_PARSED;
 
 	} else if (ptype & RTE_PTYPE_L3_IPV6) {
 		/* Header processing */
@@ -501,6 +518,8 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 		acl->ip6_data[acl->n_ip6] = data;
 		acl->ip6_m[acl->n_ip6] = m;
 		acl->n_ip6++;
+		m->udata64 |= PKT_META_PARSED;
+
 	} else {
 		/* We only filter IPv4 and IPv6 for now. */
 		fwd_ctrl_pkt(m, ctx->cfg);
@@ -589,30 +608,67 @@ nat_ip_pkts(struct rte_hash *ht, uint32_t *ips, struct rte_mbuf **pkts,
 	}
 }
 
+static inline int
+test_synauth(struct rte_mbuf *m, struct synauth_ctx *ctx)
+{
+	struct tcp_hdr *th;
+	uint32_t ptype;
+	int r;
+
+	ptype = PKT_TYPE(m);
+	if (ptype == RTE_PTYPE_L3_IPV4) {
+		th = rte_pktmbuf_mtod_offset(m, struct tcp_hdr *,
+		    sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr));
+		r = (th->tcp_flags & (TH_SYN|TH_RST)) ?
+		    synauth_test_ip(m, ctx) : 1;
+	} else if (ptype == RTE_PTYPE_L3_IPV6) {
+		th = ip6_l4_hdr(m);
+		r = (th->tcp_flags & (TH_SYN|TH_RST)) ?
+		    synauth_test_ip6(m, ctx) : 1;
+	} else {
+		RTE_LOG(WARNING, USER1,
+		    "Unknown packet type %u in syn check\n.",
+		    ptype);
+		r = -1;
+	}
+
+	return r;
+}
+
+
 static inline void
-fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *pkt, uint32_t res)
+fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *m, uint32_t res)
 {
 	if (unlikely(res & ACL_ACTION_COUNT)) {
 		uint8_t id = ACL_COUNT_ID(res);
-		uint8_t zone = PORT2ZONE(pkt->port);
+		uint8_t zone = PORT2ZONE(m->port);
 		lp->fw.ctx->counters[zone][id].packets++;
-		lp->fw.ctx->counters[zone][id].bytes += pkt->data_len;
+		lp->fw.ctx->counters[zone][id].bytes += m->data_len;
 	}
 	if (unlikely(res & ACL_ACTION_MONIT)) {
 		struct rte_mbuf *clone;
-		clone = rte_pktmbuf_clone(pkt, cfg.pools[rte_socket_id()]);
+		clone = rte_pktmbuf_clone(m, cfg.pools[rte_socket_id()]);
 		fwd_ctrl_pkt(clone, lp);
 	}
 	if (likely(res & ACL_ACTION_ACCEPT)) {
-		if (likely(!rt_is_local(pkt))) {
-			fwd_nic_pkt(pkt, lp);
+		if (likely(!rt_is_local(m))) {
+			if (res & ACL_ACTION_SYNAUTH) {
+				if (test_synauth(m, &lp->fw.ctx->sauth)) {
+					fwd_nic_pkt(m, lp);
+				} else {
+					m->udata64 |= PKT_META_SYNAUTH;
+					fwd_ol_pkt(m, lp);
+				}
+			} else {
+				fwd_nic_pkt(m, lp);
+			}
 		} else {
-			pkt->udata64 |= PKT_META_LOCAL;
-			fwd_ctrl_pkt(pkt, lp);
+			m->udata64 |= PKT_META_LOCAL;
+			fwd_ctrl_pkt(m, lp);
 		}
 	} else {
-		pkt_dump(pkt, "dropping packet: ");
-		rte_pktmbuf_free(pkt);
+		pkt_dump(m, "dropping packet: ");
+		rte_pktmbuf_free(m);
 	}
 }
 
@@ -846,6 +902,11 @@ init_ctx(struct worker_lc_cfg *lp)
 		    cfg.frag_max_flow_num, cfg.frag_max_flow_ttl) != 0) {
 			rte_panic("Could initialize fragmentation context. "
 			    "Shutting down...\n");
+		}
+
+		if (synauth_init(&ctx->sauth) != 0) {
+			rte_panic("Could not initialize syn authentication "
+			    "context. Shutting down...");
 		}
 	}
 	n = rte_atomic16_add_return(&n_workers, 1) - 1;

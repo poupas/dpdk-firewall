@@ -53,7 +53,6 @@ gw_info(uint16_t vlan_tci, in_addr_t addr)
 		}
 		return NULL;
 	}
-
 	for (i = 0; i < cfg.n_igws; i++) {
 		if (addr == cfg.igws[i].ip.s_addr) {
 			return &cfg.igws[i];
@@ -101,14 +100,12 @@ update_from_arp(const struct rte_mbuf *m, const uint8_t *data, uint64_t now)
 		}
 		return NULL;
 	}
-
 	if (likely(memcmp(&ea->arp_sha, &gwa->mac, ETHER_ADDR_LEN) == 0)) {
 		//RTE_LOG(DEBUG, USER1, "Already have latest mac address. "
-		//    "Ignoring...\n");
+		    // "Ignoring...\n");
 		gwa->update_ts = now;
 		return NULL;
 	}
-
 	ether_addr_copy(&ea->arp_sha, &gwa->mac);
 	print_mac_addr((uint8_t *)&gwa->mac, gwa->ip, m->port);
 
@@ -122,23 +119,21 @@ update_from_ip(const struct rte_mbuf *m, const uint8_t *data, uint64_t now)
 	const struct ipv4_hdr *ih;
 	struct gw_addr *gwa;
 
-	eh = (const struct ether_hdr *) data;
-	ih = (const struct ipv4_hdr *) (data + sizeof(struct ether_hdr));
+	eh = (const struct ether_hdr *)data;
+	ih = (const struct ipv4_hdr *)(data + sizeof(struct ether_hdr));
 
 	/* Check if the ARP packet is from a gateway */
 	if ((gwa = gw_info(m->vlan_tci, ih->src_addr)) == NULL) {
 		//LOG(DEBUG, USER1, "%4s packet not from known gateway.\n",
-		//    "ARP");
+		    //"ARP");
 		return NULL;
 	}
-
 	if (likely(memcmp(&eh->s_addr, &gwa->mac, ETHER_ADDR_LEN) == 0)) {
 		//LOG(DEBUG, USER1, "%4s already have latest mac address. "
-		//    "Ignoring...\n", "ARP");
+		    // "Ignoring...\n", "ARP");
 		gwa->update_ts = now;
 		return NULL;
 	}
-
 	ether_addr_copy(&eh->s_addr, &gwa->mac);
 	print_mac_addr((uint8_t *)&gwa->mac, gwa->ip, m->port);
 
@@ -154,7 +149,7 @@ create_request(in_addr_t ip, uint16_t vlan)
 	struct ether_arp *ah;
 	uint8_t *data;
 	static struct ether_addr brd = {
-	    .addr_bytes = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+		.addr_bytes = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	};
 
 	pool = cfg.pools[rte_socket_id()];
@@ -162,10 +157,9 @@ create_request(in_addr_t ip, uint16_t vlan)
 	if (m == NULL) {
 		return NULL;
 	}
-
 	data = rte_pktmbuf_mtod(m, uint8_t *);
-	eh = (struct ether_hdr *) data;
-	ah = (struct ether_arp *) (data + sizeof(struct ether_hdr));
+	eh = (struct ether_hdr *)data;
+	ah = (struct ether_arp *)(data + sizeof(struct ether_hdr));
 
 	/* Ethernet header */
 	ether_addr_copy(&cfg.ifaces[0].hwaddr, &eh->s_addr);
@@ -205,11 +199,9 @@ arp_chk_gw_pkt(struct rte_mbuf *m, uint64_t now)
 	if (PKT_TYPE(m) == RTE_PTYPE_L2_ETHER_ARP) {
 		return update_from_arp(m, rte_pktmbuf_mtod(m, uint8_t *), now);
 	}
-
 	if ((m->udata64 & PKT_META_LOCAL) && PKT_TYPE(m) == RTE_PTYPE_L3_IPV4) {
 		return update_from_ip(m, rte_pktmbuf_mtod(m, uint8_t *), now);
 	}
-
 	return NULL;
 }
 
@@ -227,28 +219,24 @@ arp_send_probes(struct worker_lc_cfg *lp, struct gw_addr *gws,
 		    now_tsc - gws[i].probe_ts < US2TSC(ARP_PROBE_US)) {
 			continue;
 		}
-
 		if (gws[i].probes > ARP_MAX_PROBES) {
 			/* Not yet ready to start sending ARP probes */
 			if (now_tsc -
 			    gws[i].probe_ts < US2TSC(ARP_PROBE_RETRY_US)) {
 				continue;
 			}
-
 			/* Start probing again */
 			gws[i].probes = 0;
 		}
-
 		/* Ensure that we have a configured address for the vlan */
 		if (unlikely(cfg.vlans[gws[i].vlan].ip.s_addr == 0)) {
 			continue;
 		}
-
 		char a, b, c, d;
 		uint32_to_char(gws[i].ip.s_addr, &d, &c, &b, &a);
 		//LOG(DEBUG, USER1, "%4s sending probe for: "
-		//    "%hhu.%hhu.%hhu.%hhu vlan: %" PRIu16 "\n",
-		//    "ARP", a, b, c, d, gws[i].vlan);
+		    // "%hhu.%hhu.%hhu.%hhu vlan: %" PRIu16 "\n",
+		    //"ARP", a, b, c, d, gws[i].vlan);
 		m = create_request(gws[i].ip.s_addr, gws[i].vlan);
 		if (m == NULL) {
 			/* TODO: log error */

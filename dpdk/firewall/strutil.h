@@ -22,4 +22,4 @@
 size_t strlcpy(char *, const char *, size_t);
 size_t strlcat(char *, const char *, size_t);
 
-#endif /* STRUTIL_H_ */
+#endif	/* STRUTIL_H_ */

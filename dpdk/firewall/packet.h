@@ -148,6 +148,10 @@ struct ether_arp {
 #define PKT_META_ROUTED		(1 << 3)
 #define PKT_META_LOCAL		(1 << 4)
 #define PKT_META_VLAN_TAG	(1 << 5)
+#define PKT_META_SYNAUTH	(1 << 6)
+#define PKT_META_PARSED		(1 << 7)
+#define PKT_META_ALT_HDR	(1 << 8)
+
 
 /*
  * SCTP
@@ -188,9 +192,15 @@ struct vlan_ethhdr {
 	uint16_t vlan_proto;
 	uint16_t vlan_tci;
 	uint16_t enc_etype;
-}	__attribute__((__packed__));
+}           __attribute__((__packed__));
 
-#define L4_HDR_LEN 20
+
+struct mbuf_extra {
+	uint8_t *l4hdr;
+	uint8_t hdrs[];
+};
+
+#define L4_HDR_LEN 60
 
 #define _ntohs rte_bswap16
 #define _htons rte_bswap16
@@ -292,6 +302,24 @@ ip6_hash_crc(const void *data, __rte_unused uint32_t datalen, uint32_t initval)
 #endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
 
 	return initval;
+}
+
+static inline void *
+ip6_l4_hdr(struct rte_mbuf *m)
+{
+	assert(m->udata64 & PKT_META_PARSED);
+
+	if (unlikely(m->udata64 & PKT_META_ALT_HDR)) {
+		struct mbuf_extra *me;
+
+		me = rte_pktmbuf_mtod_offset(m, struct mbuf_extra *,
+		    m->data_len);
+
+		return me->l4hdr;
+	}
+
+	return rte_pktmbuf_mtod_offset(m, void *,
+	    sizeof(struct ether_addr) + sizeof(struct ipv6_hdr));
 }
 
 inline uint32_t pkt_type(struct rte_mbuf *m);

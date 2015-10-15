@@ -46,7 +46,7 @@ except ImportError:
     sys.exit(1)
 
 # These flags must be kept in sync with acl.h
-# Please note that the last 4 bits are reserved for
+# Please note that bits 0-4 (MSB ordering) are reserved for
 # rule statistics purposes.
 ACL_ACTION_ACCEPT   = 1 << 0
 ACL_ACTION_DROP     = 1 << 1
@@ -55,6 +55,7 @@ ACL_ACTION_SNAT     = 1 << 3
 ACL_ACTION_DNAT     = 1 << 4
 ACL_ACTION_COUNT    = 1 << 5
 ACL_ACTION_MONIT    = 1 << 6
+ACL_ACTION_SYNAUTH  = 1 << 7
 
 ICMP_ECHOREPLY      = 0
 ICMP_DEST_UNREACH   = 3
@@ -266,7 +267,8 @@ class ACLRule(object):
             'drop': ACL_ACTION_DROP,
             'local': ACL_ACTION_LOCAL,
             'counter': ACL_ACTION_COUNT,
-            'monitor': ACL_ACTION_MONIT
+            'monitor': ACL_ACTION_MONIT,
+            'synauth': ACL_ACTION_SYNAUTH
         }
         return codes.get(action)
 

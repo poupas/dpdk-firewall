@@ -65,15 +65,15 @@ rt_is_local(struct rte_mbuf *m)
 	if (m->packet_type & RTE_PTYPE_L3_IPV4) {
 		struct ipv4_hdr *ih;
 
-		ih = (struct ipv4_hdr *) (data + sizeof(struct ether_hdr));
+		ih = (struct ipv4_hdr *)(data + sizeof(struct ether_hdr));
 		is_local = (ih->dst_addr & cfg.vlans[vlan].ip_mask.s_addr) ==
 		    cfg.vlans[vlan].ip_net.s_addr;
 	} else if (m->packet_type & RTE_PTYPE_L3_IPV6) {
 		struct ipv6_hdr *ih;
 		__m128i addr, net;
 
-		ih = (struct ipv6_hdr *) (data + sizeof(struct ether_hdr));
-		addr = _mm_loadu_si128((__m128i *)&ih->dst_addr);
+		ih = (struct ipv6_hdr *)(data + sizeof(struct ether_hdr));
+		addr = _mm_loadu_si128((__m128i *) & ih->dst_addr);
 		net = _mm_and_si128(addr, cfg.vlans[vlan].ip6_mask.xmm);
 		is_local = is_equal128(net, cfg.vlans[vlan].ip6_net.xmm);
 	} else {
@@ -121,10 +121,10 @@ rt_refresh_gws(struct rt_ctx *ctx)
 static inline
 __attribute__((always_inline))
 	uint64_t
-		hash_pkt(struct rte_mbuf *m, struct ether_hdr *eh, uint8_t flow)
+	         hash_pkt(struct rte_mbuf *m, struct ether_hdr *eh, uint8_t flow)
 {
 	if (likely(PKT_TYPE(m) == RTE_PTYPE_L3_IPV4)) {
-		struct ipv4_hdr *iph = (struct ipv4_hdr *) (eh + 1);
+		struct ipv4_hdr *iph = (struct ipv4_hdr *)(eh + 1);
 
 		if (flow == FLOW_VLAN_OUT) {
 			return rte_hash_crc_4byte(iph->src_addr, 0);
@@ -132,7 +132,7 @@ __attribute__((always_inline))
 			return rte_hash_crc_4byte(iph->dst_addr, 0);
 		}
 	} else {
-		struct ipv6_hdr *iph = (struct ipv6_hdr *) (eh + 1);
+		struct ipv6_hdr *iph = (struct ipv6_hdr *)(eh + 1);
 		uint64_t *r;
 
 		if (flow == FLOW_VLAN_OUT) {
@@ -148,8 +148,8 @@ __attribute__((always_inline))
 static inline
 __attribute__((always_inline))
 	struct ether_addr *
-		rt_select_gw(struct rte_mbuf *m, struct ether_hdr *eh,
-				struct rt_ctx *ctx)
+	           rt_select_gw(struct rte_mbuf *m, struct ether_hdr *eh,
+               struct rt_ctx *ctx)
 {
 	if (PKT_VLANID(m->vlan_tci) == ctx->ovlan) {
 		uint64_t slot = hash_pkt(m, eh, FLOW_VLAN_OUT);

@@ -46,7 +46,7 @@
 /*
  * These flags must be kept in sync with build_rules.py
  *
- * Please note that the last 4 bits are reserved for
+ * Please note that bits 0-4 (MSB ordering) are reserved for
  * rule statistics purposes.
  */
 #define ACL_ACTION_ACCEPT	1 << 0
@@ -56,6 +56,7 @@
 #define ACL_ACTION_DNAT		1 << 4
 #define ACL_ACTION_COUNT	1 << 5
 #define ACL_ACTION_MONIT	1 << 6
+#define ACL_ACTION_SYNAUTH	1 << 7
 
 #define UDATA_BITS (sizeof(uint32_t) * 8)
 #define COUNT_BITS (4)

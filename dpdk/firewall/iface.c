@@ -74,7 +74,6 @@ scan_vlans(void)
 		if (sscanf(ifa->ifa_name, "vlan%" SCNu16, &vlan) != 1) {
 			continue;
 		}
-
 		family = ifa->ifa_addr->sa_family;
 		if (family == AF_INET) {
 			struct sockaddr_in *sa, *sm;
@@ -90,7 +89,6 @@ scan_vlans(void)
 			if (addr != cfg.vlans[vlan].ip.s_addr) {
 				cfg.vlans[vlan].ip.s_addr = addr;
 			}
-
 			if (net != cfg.vlans[vlan].ip_net.s_addr) {
 				changed = 1;
 				cfg.vlans[vlan].ip_net.s_addr = net;
@@ -103,14 +101,13 @@ scan_vlans(void)
 			sa = (struct sockaddr_in6 *)ifa->ifa_addr;
 			sm = (struct sockaddr_in6 *)ifa->ifa_netmask;
 
-			addr = _mm_loadu_si128((__m128i *)&sa->sin6_addr);
-			mask = _mm_loadu_si128((__m128i *)&sm->sin6_addr);
+			addr = _mm_loadu_si128((__m128i *) & sa->sin6_addr);
+			mask = _mm_loadu_si128((__m128i *) & sm->sin6_addr);
 			net = _mm_and_si128(addr, mask);
 
 			if (!is_equal128(addr, cfg.vlans[vlan].ip6.xmm)) {
 				_mm_store_si128(&cfg.vlans[vlan].ip6.xmm, addr);
 			}
-
 			if (!is_equal128(net, cfg.vlans[vlan].ip6_net.xmm)) {
 				changed = 1;
 				_mm_store_si128(&cfg.vlans[vlan].ip6_net.xmm,

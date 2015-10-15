@@ -96,7 +96,6 @@ kni_alloc_port(uint8_t port, struct lc_cfg *lcp)
 		    port);
 		goto done;
 	}
-
 	/* Configure KNI interface */
 	if ((ret = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP)) < 0) {
 		goto done;
@@ -111,28 +110,21 @@ kni_alloc_port(uint8_t port, struct lc_cfg *lcp)
 	if ((ret = ioctl(sock, SIOCSIFHWADDR, &ifr) < 0)) {
 		goto done;
 	}
-
 	/* Bring the interface up */
 	/*
-	if ((ret = ioctl(sock, SIOCGIFFLAGS, &ifr)) < 0) {
-		goto done;
-	}
-
-	ifr.ifr_flags |= IFF_UP;
-	if ((ret = ioctl(sock, SIOCSIFFLAGS, &ifr)) < 0) {
-		goto done;
-	}
+	 * if ((ret = ioctl(sock, SIOCGIFFLAGS, &ifr)) < 0) { goto done; }
+	 * 
+	 * ifr.ifr_flags |= IFF_UP; if ((ret = ioctl(sock, SIOCSIFFLAGS, &ifr))
+	 * < 0) { goto done; }
 	 */
 done:
 	if (sock >= 0) {
 		close(sock);
 	}
-
 	if (ret < 0 && kni) {
 		rte_kni_release(kni);
 		kni = NULL;
 	}
-
 	return kni;
 }
 
@@ -224,7 +216,6 @@ kni_fwd_pkts_to_kernel(struct worker_lc_cfg *lp, uint32_t burst)
 		if (unlikely(n_rx == 0)) {
 			continue;
 		}
-
 		n_pkts += n_rx;
 		base = 0;
 		cur = 0;
@@ -262,7 +253,6 @@ kni_fwd_pkts_to_kernel(struct worker_lc_cfg *lp, uint32_t burst)
 				util_free_mbufs_burst(
 				    &ibuf[base + n_tx], len - n_tx);
 			}
-
 			base = cur;
 		}
 	}
@@ -295,7 +285,6 @@ kni_fwd_pkts_to_nic(struct worker_lc_cfg *lp, uint32_t burst)
 		if (unlikely(n_rx == 0)) {
 			continue;
 		}
-
 		for (i = 0; i < n_rx; i++) {
 			outbuf[i]->port = port;
 			outbuf[i]->udata64 |=
@@ -309,7 +298,6 @@ kni_fwd_pkts_to_nic(struct worker_lc_cfg *lp, uint32_t burst)
 		if (unlikely(n_tx < n_rx)) {
 			util_free_mbufs_burst(&outbuf[n_tx], n_rx - n_tx);
 		}
-
 		n_pkts += n_rx;
 	}
 

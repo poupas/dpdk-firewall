@@ -38,17 +38,15 @@ wrk_pkt_stats(struct worker_lc_cfg *lp, uint64_t *last_stats)
 	uint64_t elapsed_us;
 
 	elapsed_us = TSC2US(now_tsc - *last_stats);
-	if (elapsed_us < TASK_STATS_US)  {
+	if (elapsed_us < TASK_STATS_US) {
 		return;
 	}
-
 	for (i = 0; i < lp->n_irings; i++) {
 		uint64_t pps;
 
 		if (lp->irings_pkts[i] == 0) {
 			continue;
 		}
-
 		pps = lp->irings_pkts[i] / (elapsed_us / US_PER_S);
 		lp->irings_pkts[i] = 0;
 
@@ -65,7 +63,6 @@ wrk_pkt_stats(struct worker_lc_cfg *lp, uint64_t *last_stats)
 		if (lp->crings_pkts[i] == 0) {
 			continue;
 		}
-
 		pps = lp->crings_pkts[i] / (elapsed_us / US_PER_S);
 		lp->crings_pkts[i] = 0;
 

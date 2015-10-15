@@ -60,9 +60,10 @@ is_equal128(__m128i a, __m128i b)
 	return _mm_testc_si128(zero, c);
 }
 
-static inline int is_power_of_two(uint32_t a)
+static inline int 
+is_power_of_two(uint32_t a)
 {
-    return (a != 0) && ((a & (a - 1)) == 0);
+	return (a != 0) && ((a & (a - 1)) == 0);
 }
 
 static inline void
@@ -122,6 +123,19 @@ util_flush_mp_ring_buffer(struct rte_ring *ring, struct mbuf_array *buffer)
 		    buffer->n_mbufs - n_tx);
 	}
 	buffer->n_mbufs = 0;
+}
+
+static inline uint32_t
+util_hash_crc(const void *data, uint32_t datalen, uint32_t initval)
+{
+
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+	initval = rte_hash_crc(data, datalen, initval);
+#else	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+	initval = rte_jhash(data, datalen, initval);
+#endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+
+	return initval;
 }
 
 #endif	/* UTIL_H_ */
