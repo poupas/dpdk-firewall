@@ -154,7 +154,7 @@ init_mbuf_pools(void)
 static void
 init_ol_mbuf_pools(void)
 {
-	uint8_t socket, lcore;
+	uint8_t socket;
 	uint32_t nb_mbuf;
 
 	/*

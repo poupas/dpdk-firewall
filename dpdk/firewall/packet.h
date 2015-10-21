@@ -61,6 +61,7 @@
 #ifndef _PACKET_H_
 #define _PACKET_H_
 
+#include <assert.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
@@ -70,6 +71,7 @@
 
 #include <rte_byteorder.h>
 #include <rte_ip.h>
+#include <rte_tcp.h>
 #include <rte_ether.h>
 #include <rte_hash_crc.h>
 
@@ -148,10 +150,25 @@ struct ether_arp {
 #define PKT_META_ROUTED		(1 << 3)
 #define PKT_META_LOCAL		(1 << 4)
 #define PKT_META_VLAN_TAG	(1 << 5)
-#define PKT_META_SYNAUTH	(1 << 6)
-#define PKT_META_PARSED		(1 << 7)
-#define PKT_META_ALT_HDR	(1 << 8)
+#define PKT_META_SYNAUTH_IP	(1 << 6)
+#define PKT_META_SYNAUTH_IP6	(1 << 7)
+#define PKT_META_SYNAUTH	(PKT_META_OL_IP|PKT_META_OL_IP6)
+#define PKT_META_PARSED		(1 << 8)
+#define PKT_META_ALT_HDR	(1 << 9)
 
+
+/*
+ * TCP
+ */
+#define	TH_FIN	0x01
+#define	TH_SYN	0x02
+#define	TH_RST	0x04
+#define	TH_PUSH	0x08
+#define	TH_ACK	0x10
+#define	TH_URG	0x20
+#define	TH_ECE	0x40
+#define	TH_CWR	0x80
+#define	TH_FLAGS	(TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
 
 /*
  * SCTP
@@ -302,6 +319,27 @@ ip6_hash_crc(const void *data, __rte_unused uint32_t datalen, uint32_t initval)
 #endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
 
 	return initval;
+}
+
+static inline uint32_t
+data_hash_crc(const void *data, uint32_t datalen, uint32_t initval)
+{
+
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+	initval = rte_hash_crc(data, datalen, initval);
+#else	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+	initval = rte_jhash(data, datalen, initval);
+#endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
+
+	return initval;
+}
+
+static inline void *
+ip_l4_hdr(struct rte_mbuf *m)
+{
+	/* XXX: assumes that the IP header has no options */
+	return rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr) +
+	    sizeof(struct ipv4_hdr));
 }
 
 static inline void *

@@ -34,7 +34,6 @@
 #include <errno.h>
 
 #include <rte_hash.h>
-#include <rte_fbk_hash.h>
 #include <rte_cycles.h>
 
 #define HASH_TTL_US 60 * US_PER_S
@@ -51,46 +50,11 @@ struct rollhash {
 
 
 static inline int
-rh_fbk_create(struct rollhash *rh, struct rte_fbk_hash_params *p)
-{
-	struct rte_hash *tables[2];
-	char orig_name, name[64];
-	int i, rc;
-
-	rc = -1;
-	orig_name = p->name;
-	p->name = name;
-
-	/* Ensure the sum of internal entries matches the requested count */
-	p->entries /= 2;
-
-	for (i = 0; i < 2; i++) {
-		snprintf(name, sizeof(name), "%s_%d", orig_name, i);
-		tables[i] = rte_fbk_hash_create(p);
-		if (tables[i] == NULL) {
-			goto done;
-		}
-	}
-
-	rc = 0;
-	rh->old = tables[0];
-	rh->cur = tables[1];
-
-done:
-	if (rc < 0) {
-		if (tables[0] != NULL)
-			rte_fbk_hash_free(tables[0]);
-		if (tables[1] != NULL)
-			rte_fbk_hash_free(tables[1]);
-	}
-	return rc;
-}
-
-static inline int
 rh_create(struct rollhash *rh, struct rte_hash_parameters *p)
 {
 	struct rte_hash *tables[2];
-	char orig_name, name[64];
+	const char *orig_name;
+	char name[64];
 	int i, rc;
 
 	rc = -1;
@@ -109,8 +73,8 @@ rh_create(struct rollhash *rh, struct rte_hash_parameters *p)
 	}
 
 	rc = 0;
-	rh->old = tables[0];
-	rh->cur = tables[1];
+	rh->old.h = tables[0];
+	rh->cur.h = tables[1];
 
 done:
 	if (rc < 0) {
@@ -141,7 +105,7 @@ rh_add_key_data(struct rollhash *rh, const void *key, void *data,
 	/* Roll-over hashtables */
 	tmp = rh->cur.h;
 
-	rte_rash_reset(rh->old.h);
+	rte_hash_reset(rh->old.h);
 	rh->cur.h = rh->old.h;
 
 	rh->old.h = tmp;

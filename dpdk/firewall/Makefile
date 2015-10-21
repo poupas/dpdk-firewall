@@ -44,17 +44,18 @@ APP = firewall
 # all source are stored in SRCS-y
 SRCS-y := main.c strlcpy.c strlcat.c config.c init.c io.c runtime.c
 SRCS-y += worker.c firewall.c kni.c tap.c acl.c nat.c util.c
-SRCS-y += control.c arp.c iface.c packet.c frag.c
+SRCS-y += control.c arp.c iface.c packet.c frag.c synauth.c
 
 #CFLAGS += -O3 -g
 CFLAGS += -O0 -g -DDEBUG
 CFLAGS += $(WERROR_FLAGS)
-CFLAGS += -D_GNU_SOURCE -DMAX_NIC_PORTS=6 -DMAX_LCORES=16
+CFLAGS += -DMAX_NIC_PORTS=6 -DMAX_LCORES=16
 CFLAGS += -DMAX_IO_LCORES=8 -DMAX_WORKER_LCORES=8
-CFLAGS += -D_LGPL_SOURCE
+CFLAGS += -D_GNU_SOURCE -D_LGPL_SOURCE
 
 LDFLAGS += -lconfig
 LDFLAGS += -lurcu-qsbr
+LDFLAGS += -lcrypto
 
 # workaround for a gcc bug with noreturn attribute
 # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=12603

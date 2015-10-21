@@ -680,10 +680,10 @@ parse_routing(config_setting_t * rt)
 	}
 	cfg.ovlan = vlan;
 
-	config_lookup_int(
+	config_setting_lookup_int(
 	    rt, "frag_max_flow_num", (int *)&cfg.frag_max_flow_num);
 
-	config_lookup_int(
+	config_setting_lookup_int(
 	    rt, "frag_max_flow_ttl", (int *)&cfg.frag_max_flow_ttl);
 
 	return 0;

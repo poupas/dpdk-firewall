@@ -167,7 +167,7 @@ update_zone(struct zone_cfg *zp, struct zone_cfg *tmp)
 
 /*
  * Deprecated:
- * The forwarding code will check the timestamp for every pkt.
+ * The forwarding code will check the gateway timestamp for every pkt.
  */
 static inline void
 refresh_routes(struct fw_ctx *ctx)
@@ -317,53 +317,57 @@ fw_init(void)
 }
 
 static inline uint8_t *
-setup_ip_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
+setup_ip_acl_data(struct rte_mbuf **mr, struct fw_ctx *ctx)
 {
+	struct rte_mbuf *m;
 	struct ipv4_hdr *ih;
 	uint8_t *ehp;
 
-	ehp = rte_pktmbuf_mtod(*m, uint8_t *);
+	m = *mr;
+	ehp = rte_pktmbuf_mtod(m, uint8_t *);
 	ih = (struct ipv4_hdr *)(ehp + sizeof(struct ether_hdr));
 
 	/*
 	 * Accept only IPv4 packets with no extra options.
 	 *
 	 * It is assumed that the size of an IPv4 header is 20 bytes.
-	 * Stuff will break if IP options are allowed.
+	 * This check ensures that assumption is valid.
+	 * Stuff will break otherwise (see ip_l4_hdr in packet.h).
 	 */
 	if (unlikely(PKT_IP_HDR_LEN(ih) != IP_HDR_LEN)) {
 		return NULL;
 	}
+
 	/* Check for fragments */
 	if (unlikely(rte_ipv4_frag_pkt_is_fragmented(ih) &&
 	    ctx->cfg->rt.reassembly)) {
-		struct rte_mbuf *mo;
+		uint64_t udata64;
 
 		ehp = NULL;
+
 		switch (ctx->cfg->ol) {
 		case WORKER_OL_PROV:
-			uint64_t udata64;
+			m->udata64 |= PKT_META_OL_IP;
+			udata64 = m->udata64;
 
-			*m->udata64 |= PKT_META_OL_IP;
-			udata64 = *m->udata64;
-
-			if ((mo = frag_ip_reass(&ctx->frag, ih, *m)) == NULL) {
+			if ((m = frag_ip_reass(&ctx->frag, ih, m)) == NULL) {
 				break;
 			}
-			ehp = rte_pktmbuf_mtod(mo, uint8_t *);
-			*m = mo;
-			*m->udata64 = udata64;
+			ehp = rte_pktmbuf_mtod(m, uint8_t *);
+			*mr = m;
+			m->udata64 = udata64;
 			break;
+
 		case WORKER_OL_CLNT:
-			*m->udata64 |= PKT_META_OL_IP;
+			m->udata64 |= PKT_META_OL_IP;
 			/* Offload fragment to offloader cores */
-			fwd_ol_pkt(*m, ctx->cfg);
+			fwd_ol_pkt(m, ctx->cfg);
 			break;
+
 		default:
 			RTE_LOG(WARNING, USER1, "Unknown offload type!\n");
 			break;
 		}
-
 	}
 
 	return ehp ? IP_DATA_2PROTO(ehp) : NULL;
@@ -373,28 +377,30 @@ static inline uint8_t *
 build_alt_ip6_hdr(struct rte_mbuf *m, uint32_t exthdrs, uint8_t *l4hdr,
     uint16_t l4proto)
 {
-	struct pkt_meta *meta;
+	struct mbuf_extra *extra;
 	uint8_t *althdr, *hdr;
 
 	hdr = rte_pktmbuf_mtod(m, uint8_t *);
 	althdr = NULL;
-	meta = (struct pkt_meta *)(hdr + m->data_len);
+	extra = (struct mbuf_extra *)(hdr + m->data_len);
 
 	hdr += ETH_HEAD_OFF;
 
 	if (l4hdr != NULL) {
 		m->udata64 |= PKT_META_ALT_HDR;
-		meta->l4hdr = l4hdr;
-		althdr = meta->hdrs;
+		extra->l4hdr = l4hdr;
+		althdr = extra->hdrs;
 		rte_memcpy(althdr, hdr, sizeof(struct ipv6_hdr));
 		rte_memcpy(althdr + sizeof(struct ipv6_hdr), l4hdr, L4_HDR_LEN);
-		((struct ipv6_hdr *)meta->hdrs)->proto = l4proto;
+		((struct ipv6_hdr *)althdr)->proto = l4proto;
+
 	} else if (exthdrs & IP6_EH_FRAGMENT) {
 		m->udata64 |= PKT_META_ALT_HDR;
-		meta->l4hdr = NULL;
-		althdr = meta->hdrs;
+		extra->l4hdr = NULL;
+		althdr = extra->hdrs;
 		rte_memcpy(althdr, hdr, sizeof(struct ipv6_hdr));
 		((struct ipv6_hdr *)althdr)->proto = IPPROTO_FRAGMENT;
+
 	} else if ((exthdrs & IP6_EH_INVALID) == 0) {	/* Ext header found */
 		althdr = hdr;
 	}
@@ -403,22 +409,24 @@ build_alt_ip6_hdr(struct rte_mbuf *m, uint32_t exthdrs, uint8_t *l4hdr,
 }
 
 static inline uint8_t *
-setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
+setup_ip6_acl_data(struct rte_mbuf **mr, struct fw_ctx *ctx)
 {
+	struct rte_mbuf *m;
 	uint8_t *l4hdr;
 	uint32_t exthdrs;
 	uint16_t l4proto;
 
+	m = *mr;
 	l4hdr = NULL;
-	exthdrs = ip6_parse_hdrs(*m, &l4hdr, &l4proto);
+	exthdrs = ip6_parse_hdrs(m, &l4hdr, &l4proto);
 
 	/* No extra headers */
 	if (likely(exthdrs == 0 && l4hdr != NULL)) {
-		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(*m, uint8_t *));
+		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(m, uint8_t *));
 	}
 	/* Extra headers but not a fragment */
 	if (!(exthdrs & IP6_EH_FRAGMENT)) {
-		uint8_t *ih = build_alt_ip6_hdr(*m, exthdrs, l4hdr, l4proto);
+		uint8_t *ih = build_alt_ip6_hdr(m, exthdrs, l4hdr, l4proto);
 		return ih ? ih + IP6_OFF2PROTO : NULL;
 	}
 	/* Fragment */
@@ -426,27 +434,29 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 		/* XXX: use fake header to filter fragment? */
 		return NULL;
 	}
+
 	switch (ctx->cfg->ol) {
+	uint64_t udata64;
+
 	case WORKER_OL_PROV:
-		struct rte_mbuf *mo;
-		uint64_t udata64;
+		m->udata64 |= PKT_META_OL_IP6;
+		udata64 = m->udata64;
 
-		*m->udata64 |= PKT_META_OL_IP6;
-		udata64 = *m->udata64;
-
-		if ((mo = frag_ip6_reass(&ctx->frag, *m)) == NULL) {
+		if ((m = frag_ip6_reass(&ctx->frag, m)) == NULL) {
 			return NULL;
 		}
-		*m = mo;
-		*m->udata64 = udata64;
+		*mr = m;
+		m->udata64 = udata64;
 
-		return setup_ip6_acl_data(m, ctx);
+		return setup_ip6_acl_data(mr, ctx);
 		break;
+
 	case WORKER_OL_CLNT:
-		*m->udata64 |= PKT_META_OL_IP6;
+		m->udata64 |= PKT_META_OL_IP6;
 		/* Offload fragment to offloader cores */
-		fwd_ol_pkt(*m, ctx->cfg);
+		fwd_ol_pkt(m, ctx->cfg);
 		break;
+
 	default:
 		RTE_LOG(WARNING, USER1, "Unknown offload type!\n");
 		break;
@@ -455,31 +465,28 @@ setup_ip6_acl_data(struct rte_mbuf **m, struct fw_ctx *ctx)
 	return NULL;
 }
 
-/*
- * Make sure that the ACL mbuf array is contiguous.
- */
-static inline void
-compact_ip_acl(struct acl_ctx *acl)
+static inline uint32_t
+compact_pkt_array(struct rte_mbuf **pkts, uint32_t n_pkts)
 {
 	uint32_t i, next;
 
 	next = 0;
-	for (i = 0; i < acl->n_ip; i++) {
-		if (acl->ip_m[i] != NULL && next == i) {
+	for (i = 0; i < n_pkts; i++) {
+		if (pkts[i] != NULL && next == i) {
 			next++;
-		} else if (acl->ip_m[i] != NULL) {
-			acl->ip_m[next] = acl->ip_m[i];
-			acl->ip_m[i] = NULL;
-			acl->n_ip--;
+		} else if (pkts[i] != NULL) {
+			pkts[next] = pkts[i];
+			pkts[i] = NULL;
 			next++;
 		}
 	}
+
+	return next;
 }
 
 static inline void
 setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 {
-	struct rte_mbuf *mo;
 	struct acl_ctx *acl;
 	uint8_t *data;
 	uint32_t ptype;
@@ -488,7 +495,7 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 	ptype = PKT_TYPE(m);
 
 	if (ptype & RTE_PTYPE_L3_IPV4) {
-		data = setup_ip_acl_data(ctx, &m);
+		data = setup_ip_acl_data(&m, ctx);
 		if (unlikely(data == NULL)) {
 			if (m->udata64 & PKT_META_OL) {
 				RTE_LOG(DEBUG, ACL, "reassembling packet");
@@ -505,7 +512,7 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 
 	} else if (ptype & RTE_PTYPE_L3_IPV6) {
 		/* Header processing */
-		data = setup_ip6_acl_data(ctx, &m);
+		data = setup_ip6_acl_data(&m, ctx);
 		if (unlikely(data == NULL)) {
 			if (m->udata64 & PKT_META_OL) {
 				RTE_LOG(DEBUG, ACL, "reassembling packet");
@@ -617,19 +624,18 @@ test_synauth(struct rte_mbuf *m, struct synauth_ctx *ctx)
 
 	ptype = PKT_TYPE(m);
 	if (ptype == RTE_PTYPE_L3_IPV4) {
-		th = rte_pktmbuf_mtod_offset(m, struct tcp_hdr *,
-		    sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr));
+		th = ip_l4_hdr(m);
 		r = (th->tcp_flags & (TH_SYN|TH_RST)) ?
-		    synauth_test_ip(m, ctx) : 1;
+		    synauth_test_ip(ctx, m) : 1;
 	} else if (ptype == RTE_PTYPE_L3_IPV6) {
 		th = ip6_l4_hdr(m);
 		r = (th->tcp_flags & (TH_SYN|TH_RST)) ?
-		    synauth_test_ip6(m, ctx) : 1;
+		    synauth_test_ip6(ctx, m) : 1;
 	} else {
 		RTE_LOG(WARNING, USER1,
 		    "Unknown packet type %u in syn check\n.",
 		    ptype);
-		r = -1;
+		r = SYNAUTH_ERROR;
 	}
 
 	return r;
@@ -653,11 +659,18 @@ fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *m, uint32_t res)
 	if (likely(res & ACL_ACTION_ACCEPT)) {
 		if (likely(!rt_is_local(m))) {
 			if (res & ACL_ACTION_SYNAUTH) {
-				if (test_synauth(m, &lp->fw.ctx->sauth)) {
+				int sa = test_synauth(m, &lp->fw.ctx->sauth);
+
+				if (sa == SYNAUTH_OK) {
 					fwd_nic_pkt(m, lp);
-				} else {
-					m->udata64 |= PKT_META_SYNAUTH;
+				} else if (sa == SYNAUTH_IP_AUTH){
+					m->udata64 |= PKT_META_SYNAUTH_IP;
 					fwd_ol_pkt(m, lp);
+				} else if (sa == SYNAUTH_IP6_AUTH){
+					m->udata64 |= PKT_META_SYNAUTH_IP6;
+					fwd_ol_pkt(m, lp);
+				} else {
+					rte_pktmbuf_free(m);
 				}
 			} else {
 				fwd_nic_pkt(m, lp);
@@ -723,22 +736,77 @@ fwd_pkts(struct worker_lc_cfg *lp, struct rte_mbuf **pkts, uint32_t n_pkts)
 }
 
 
-static inline uint32_t
+static inline void
 __attribute__((always_inline))
-check_pkts(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
+test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 {
-	struct rte_mbuf **pktbuf;
-	struct rte_ring *ring;
 	struct acl_ctx *acl;
 	struct rte_acl_ctx *acl_ctx;
-	unsigned n_rx, offset;
-	unsigned sockid;
+	unsigned sockid, offset;
 
 	acl = &ctx->acl;
-	pktbuf = ctx->cfg->ibuf.array;
+	sockid = rte_socket_id();
+	offset = 0;
+
+	rcu_read_lock();
+	while (offset < n_pkts) {
+		unsigned n_left;
+		uint8_t zid;
+
+		n_left = n_pkts - offset;
+		offset = setup_acl_search(pkts, offset, ctx, n_left, &zid);
+
+		/* IPv4 */
+		if (likely(acl->n_ip)) {
+
+			/* Apply ACLs if required */
+			if (zid < MAX_ZONES && (acl_ctx =
+			    rcu_dereference(zones[zid].ip_acl[sockid]))) {
+				rte_acl_classify(acl_ctx, acl->ip_data,
+				    acl->ip_res, acl->n_ip, MAX_ACL_CATEGORIES);
+
+				fwd_acl_pkts(ctx->cfg, acl->ip_m, acl->ip_res,
+				    acl->n_ip);
+
+				/* Forward packets without filtering */
+			} else {
+				fwd_pkts(ctx->cfg, acl->ip_m, acl->n_ip);
+			}
+		}
+
+		/* IPv6 */
+		if (likely(acl->n_ip6)) {
+			/* Apply ACLs if required */
+			if (zid < MAX_ZONES && (acl_ctx =
+			    rcu_dereference(zones[zid].ip6_acl[sockid]))) {
+				rte_acl_classify(acl_ctx, acl->ip6_data,
+				    acl->ip6_res, acl->n_ip6,
+				    MAX_ACL_CATEGORIES);
+
+				fwd_acl_pkts(ctx->cfg, acl->ip6_m, acl->ip6_res,
+				    acl->n_ip6);
+
+				/* Forward packets without filtering */
+			} else {
+				fwd_pkts(ctx->cfg, acl->ip6_m, acl->n_ip6);
+			}
+		}
+	}
+	rcu_read_unlock();
+}
+
+static inline uint32_t
+__attribute__((always_inline))
+input(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
+{
+	struct rte_mbuf **pkts;
+	struct rte_ring *ring;
+	unsigned n_rx;
+
+	pkts = ctx->cfg->ibuf.array;
 	ring = ctx->cfg->irings[ring_n];
 
-	n_rx = rte_ring_sc_dequeue_burst(ring, (void **)pktbuf, burst);
+	n_rx = rte_ring_sc_dequeue_burst(ring, (void **)pkts, burst);
 	if (unlikely(n_rx > burst)) {
 		RTE_LOG(CRIT, USER1, "FW: error receiving from ring!\n");
 		return 0;
@@ -750,74 +818,108 @@ check_pkts(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 	ctx->cfg->irings_pkts[ring_n] += n_rx;
 #endif
 
-	sockid = rte_socket_id();
-	offset = 0;
-	rcu_read_lock();
-
-	while (offset < n_rx) {
-		unsigned n_left;
-		uint8_t zid;
-
-		n_left = n_rx - offset;
-		offset = setup_acl_search(pktbuf, offset, ctx, n_left, &zid);
-
-		/* IPv4 */
-		if (likely(acl->n_ip)) {
-
-			/* Apply ACLs if required */
-			if (zid < MAX_ZONES && (acl_ctx =
-			    rcu_dereference(zones[zid].ip_acl[sockid]))) {
-				rte_acl_classify(
-				    acl_ctx,
-				    acl->ip_data,
-				    acl->ip_res,
-				    acl->n_ip,
-				    MAX_ACL_CATEGORIES);
-
-				fwd_acl_pkts(
-				    ctx->cfg,
-				    acl->ip_m,
-				    acl->ip_res,
-				    acl->n_ip);
-
-				/* Forward packets without filtering */
-			} else {
-				fwd_pkts(ctx->cfg, acl->ip_m, acl->n_ip);
-			}
-		}
-		/* IPv6 */
-		if (likely(acl->n_ip6)) {
-			/* Apply ACLs if required */
-			if (zid < MAX_ZONES && (acl_ctx =
-			    rcu_dereference(zones[zid].ip6_acl[sockid]))) {
-				rte_acl_classify(
-				    acl_ctx,
-				    acl->ip6_data,
-				    acl->ip6_res,
-				    acl->n_ip6,
-				    MAX_ACL_CATEGORIES);
-
-				fwd_acl_pkts(
-				    ctx->cfg,
-				    acl->ip6_m,
-				    acl->ip6_res,
-				    acl->n_ip6);
-
-				/* Forward packets without filtering */
-			} else {
-				fwd_pkts(ctx->cfg, acl->ip6_m, acl->n_ip6);
-			}
-		}
-	}
-	rcu_read_unlock();
+	test_pkts(ctx, pkts, n_rx);
 
 	return n_rx;
 }
 
-static inline uint32_t
-offload_pkts(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
+static unsigned
+synauth_ol(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 {
-	return check_pkts(ctx, burst, ring_n);
+	struct worker_lc_cfg *lp;
+	struct synauth_ctx *sactx;
+	struct tcp_hdr *th;
+	unsigned i, n_sa, action;
+	int sares;
+
+#define _ACT_IGNORE	0
+#define _ACT_FORWARD	1
+#define _ACT_DROP	2
+
+	lp = ctx->cfg;
+	sactx = &ctx->sauth;
+	n_sa = 0;
+
+	for (i = 0; i < n_pkts; i++) {
+		action = _ACT_IGNORE;
+
+		if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP) {
+			th = ip_l4_hdr(pkts[i]);
+			n_sa++;
+
+			if (th->tcp_flags & TH_SYN) {
+				synauth_auth_ip(sactx, pkts[i]);
+				action = _ACT_DROP;
+			} else if (th->tcp_flags & TH_RST) {
+				sares = synauth_vrfy_ip(sactx, pkts[i]);
+				action = sares == SYNAUTH_OK ?
+				    _ACT_FORWARD : _ACT_DROP;
+			}
+
+		} else if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP6) {
+			th = ip6_l4_hdr(pkts[i]);
+			n_sa++;
+
+			if (th->tcp_flags & TH_SYN) {
+				synauth_auth_ip6(sactx, pkts[i]);
+				action = _ACT_DROP;
+			} else if (th->tcp_flags & TH_RST) {
+				sares = synauth_vrfy_ip6(sactx, pkts[i]);
+				action = sares == SYNAUTH_OK ?
+				    _ACT_FORWARD : _ACT_DROP;
+			}
+		}
+
+		if (action == _ACT_FORWARD) {
+			fwd_nic_pkt(pkts[i], lp);
+			pkts[i] = NULL;
+
+		} else if (action == _ACT_DROP) {
+			rte_pktmbuf_free(pkts[i]);
+			pkts[i] = NULL;
+		}
+	}
+
+#undef _ACT_IGNORE
+#undef _ACT_FORWARD
+#undef _ACT_DROP
+
+	return n_sa;
+}
+
+static inline uint32_t
+input_ol(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
+{
+	struct rte_mbuf **pkts;
+	struct rte_ring *ring;
+	unsigned n_rx, n_sa;
+
+	pkts = ctx->cfg->ibuf.array;
+	ring = ctx->cfg->irings[ring_n];
+
+	n_rx = rte_ring_sc_dequeue_burst(ring, (void **)pkts, burst);
+	if (unlikely(n_rx > burst)) {
+		RTE_LOG(CRIT, USER1, "FW: error receiving from ring!\n");
+		return 0;
+	}
+	if (unlikely(n_rx == 0)) {
+		return 0;
+	}
+#ifdef APP_STATS
+	ctx->cfg->irings_pkts[ring_n] += n_rx;
+#endif
+
+	/* Handle SYN authentication requests */
+	n_sa = synauth_ol(ctx, pkts, n_rx);
+	if (n_sa == n_rx) {
+		return n_rx;
+	} else if (n_sa < n_rx) {
+		n_rx = compact_pkt_array(pkts, n_rx);
+	}
+
+	test_pkts(ctx, pkts, n_rx);
+
+	return n_rx;
 }
 
 static inline void
@@ -932,7 +1034,7 @@ fw_lcore_main_loop_cnt(struct worker_lc_cfg *lp)
 	for (;;) {
 		cron_cnt(ctx, &cron);
 		for (ring = 0; ring < n_rings; ring++) {
-			if (check_pkts(ctx, burst, ring)) {
+			if (input(ctx, burst, ring)) {
 				idle = 0;
 			}
 		}
@@ -962,7 +1064,7 @@ fw_lcore_main_loop_tsc(struct worker_lc_cfg *lp)
 	for (;;) {
 		cron_tsc(ctx, &cron);
 		for (ring = 0; ring < n_rings; ring++) {
-			if (check_pkts(ctx, burst, ring)) {
+			if (input_ol(ctx, burst, ring)) {
 				idle = 0;
 			}
 		}

@@ -30,6 +30,10 @@
 #ifndef FRAG_H_
 #define FRAG_H_
 
+#include <rte_ip_frag.h>
+
+#include "main.h"
+
 struct frag_ctx {
 	struct rte_ip_frag_tbl *tbl;
 	struct rte_mempool *pool;
@@ -65,7 +69,7 @@ frag_ip6_reass(struct frag_ctx *ctx, struct rte_mbuf *m)
 		return NULL;
 	}
 	mo = rte_ipv6_frag_reassemble_packet(ctx->tbl, &ctx->death_row, m,
-	    now_tsc, ih);
+	    now_tsc, ih, fh);
 
 	return mo;
 }

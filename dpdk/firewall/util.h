@@ -125,17 +125,4 @@ util_flush_mp_ring_buffer(struct rte_ring *ring, struct mbuf_array *buffer)
 	buffer->n_mbufs = 0;
 }
 
-static inline uint32_t
-util_hash_crc(const void *data, uint32_t datalen, uint32_t initval)
-{
-
-#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
-	initval = rte_hash_crc(data, datalen, initval);
-#else	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
-	initval = rte_jhash(data, datalen, initval);
-#endif	/* RTE_MACHINE_CPUFLAG_SSE4_2 */
-
-	return initval;
-}
-
 #endif	/* UTIL_H_ */

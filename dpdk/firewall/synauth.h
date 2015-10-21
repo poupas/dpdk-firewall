@@ -49,4 +49,18 @@ struct synauth_ctx {
 	uint64_t key_ttl;
 };
 
+#define SYNAUTH_OK		0
+#define SYNAUTH_IP_AUTH		1
+#define SYNAUTH_IP6_AUTH	2
+#define SYNAUTH_INVALID		3
+#define SYNAUTH_ERROR		4
+
+int synauth_init(struct synauth_ctx *);
+int synauth_vrfy_ip(struct synauth_ctx *, struct rte_mbuf *);
+int synauth_vrfy_ip6(struct synauth_ctx *, struct rte_mbuf *);
+int synauth_auth_ip(struct synauth_ctx *, struct rte_mbuf *);
+int synauth_auth_ip6(struct synauth_ctx *, struct rte_mbuf *);
+int synauth_test_ip(struct synauth_ctx *, struct rte_mbuf *);
+int synauth_test_ip6(struct synauth_ctx *, struct rte_mbuf *);
+
 #endif	/* SYNAUTH_H_ */

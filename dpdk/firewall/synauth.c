@@ -27,10 +27,6 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <net/ethernet.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
@@ -54,109 +50,16 @@ struct _entry {
 	int32_t score;
 };
 
-#define AUTH_PKT(ih, th, r)						      \
+#define AUTH_PKT(ctx, ih, th, r)					      \
 	do {								      \
-	(r) = util_hash_crc(&(ih)->src_addr, sizeof((ih)->src_addr) * 2, 0);  \
-	(r) = util_hash_crc(&(th)->src_port, sizeof((th)->src_port) * 2, r);  \
-	(r) = authenticate(&(r), sizeof((r)), (r));			      \
+	(r) = data_hash_crc(&(ih)->src_addr, sizeof((ih)->src_addr) * 2, 0);  \
+	(r) = data_hash_crc(&(th)->src_port, sizeof((th)->src_port) * 2, r);  \
+	(r) = authenticate(ctx, &(r), sizeof(r));			      \
 	} while (0)
-
-static int
-trust_ip(struct ipv4_hdr *ih, struct synauth_ctx *ctx)
-{
-	struct _entry e;
-	uint64_t now_us;
-	uint32_t now_s;
-
-	now_us = TSC2US(now_tsc);
-	now_s = US2S(now_us);
-
-	e.score = 0;
-	e.ttl = now_s + IP_TTL_S;
-
-	return rh_add_key_data(ctx->ip_wlst, ih, &e, now_us);
-}
-
-static int
-trust_ip6(struct ipv6_hdr *ih, struct synauth_ctx *ctx)
-{
-	struct _entry e;
-	uint64_t now_us;
-	uint32_t now_s;
-
-	now_us = TSC2US(now_tsc);
-	now_s = US2S(now_us);
-
-	e.score = 0;
-	e.ttl = now_s + IP_TTL_S;
-
-	return rh_add_key_data(ctx->ip6_wlst, ih, &e, now_us);
-}
-
-static void
-setup_ack(struct tcp_hdr *th, uint32_t seq)
-{
-	uint16_t port;
-
-	port = th->src_port;
-	th->src_port = th->dst_port;
-	th->dst_port = port;
-	th->cksum = 0;
-
-	/* ACK an out-of-sequence initial sequence number */
-	th->tcp_flags |= TH_ACK;
-	th->recv_ack = th->sent_seq - 1;
-	th->sent_seq = seq;
-}
-
-int
-synauth_verify_ip(struct rte_mbuf *m, struct synauth_ctx *ctx)
-{
-	struct ipv4_hdr *ih;
-	struct tcp_hdr *th;
-	uint32_t aux;
-
-	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
-
-	/* XXX: assumes that the IP header has no options */
-	th = (struct tcp_hdr *)(ih + 1);
-
-	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ih, th, aux);
-
-	if (aux == th->recv_ack) {
-		trust_ip(ih);
-		return 1;
-	}
-
-	return 0;
-}
-
-int
-synauth_verify_ip6(struct rte_mbuf *m, struct synauth_ctx *ctx)
-{
-	struct ipv6_hdr *ih;
-	struct tcp_hdr *th;
-	uint32_t aux;
-
-	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
-	th = ip6_l4_hdr(m);
-
-	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ih, th, aux);
-
-	if (th->recv_ack == aux) {
-		trust_ip6(ih);
-		return 1;
-	}
-
-	return 0;
-}
 
 static void
 rekey_context(struct synauth_ctx *ctx, uint64_t now)
 {
-	uint8_t iv[CIPHER_BLOCK_SIZE] = {0x0};
 	uint64_t ttl;
 	int keylen;
 
@@ -171,12 +74,12 @@ rekey_context(struct synauth_ctx *ctx, uint64_t now)
 }
 
 static inline uint32_t
-authenticate(void *data, int inlen, struct synauth_ctx *ctx)
+authenticate(struct synauth_ctx *ctx, void *data, size_t inlen)
 {
 	uint8_t buf[CIPHER_BLOCK_SIZE];
 	uint64_t now;
 	uint32_t r;
-	int outlen, i;
+	int outlen;
 
 	assert(sizeof(buf) >= inlen);
 
@@ -198,12 +101,100 @@ authenticate(void *data, int inlen, struct synauth_ctx *ctx)
 	return r;
 }
 
+static int
+trust_ip(struct synauth_ctx *ctx, struct ipv4_hdr *ih)
+{
+	struct _entry e;
+	uint64_t now_us;
+	uint32_t now_s;
+
+	now_us = TSC2US(now_tsc);
+	now_s = US2S(now_us);
+
+	e.score = 0;
+	e.ttl = now_s + IP_TTL_S;
+
+	return rh_add_key_data(&ctx->ip_wlst, ih, &e, now_us);
+}
+
+static int
+trust_ip6(struct synauth_ctx *ctx, struct ipv6_hdr *ih)
+{
+	struct _entry e;
+	uint64_t now_us;
+	uint32_t now_s;
+
+	now_us = TSC2US(now_tsc);
+	now_s = US2S(now_us);
+
+	e.score = 0;
+	e.ttl = now_s + IP_TTL_S;
+
+	return rh_add_key_data(&ctx->ip6_wlst, ih, &e, now_us);
+}
+
+static void
+setup_ack(struct tcp_hdr *th, uint32_t seq)
+{
+	uint16_t port;
+
+	port = th->src_port;
+	th->src_port = th->dst_port;
+	th->dst_port = port;
+	th->cksum = 0;
+
+	/* ACK an out-of-sequence initial sequence number */
+	th->tcp_flags |= TH_ACK;
+	th->recv_ack = th->sent_seq - 1;
+	th->sent_seq = seq;
+}
+
+int
+synauth_vrfy_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
+{
+	struct ipv4_hdr *ih;
+	struct tcp_hdr *th;
+	uint32_t aux;
+
+	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
+	th = ip_l4_hdr(m);
+
+	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
+	AUTH_PKT(ctx, ih, th, aux);
+
+	if (aux == th->recv_ack) {
+		trust_ip(ctx, ih);
+		return SYNAUTH_OK;
+	}
+
+	return SYNAUTH_INVALID;
+}
+
+int
+synauth_vrfy_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
+{
+	struct ipv6_hdr *ih;
+	struct tcp_hdr *th;
+	uint32_t aux;
+
+	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
+	th = ip6_l4_hdr(m);
+
+	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
+	AUTH_PKT(ctx, ih, th, aux);
+
+	if (th->recv_ack == aux) {
+		trust_ip6(ctx, ih);
+		return SYNAUTH_OK;
+	}
+
+	return SYNAUTH_INVALID;
+}
+
 int
 synauth_init(struct synauth_ctx *ctx)
 {
-	struct rte_hash *h;
 	char name[64];
-	uint8_t iv[CIPHER_BLOCK_SIZE];
 	int rc;
 	unsigned cid, sid;
 
@@ -212,15 +203,19 @@ synauth_init(struct synauth_ctx *ctx)
 	sid = rte_socket_id();
 
 	/* IP white lists */
-	struct rte_fbk_hash_params ip_params = {
-		.name = NULL,
+	snprintf(name, sizeof(name), "synwl_ip_c%d_s%d", cid, sid);
+	struct rte_hash_parameters ip_params = {
+		.name = name,
 		.entries = MAX_ENTRIES,
+		.key_len = sizeof(struct in_addr),
 		.hash_func = ip_hash_crc,
 		.hash_func_init_val = 0,
 		.socket_id = sid
 	};
+
+	snprintf(name, sizeof(name), "synwl_ip6_c%d_s%d", cid, sid);
 	struct rte_hash_parameters ip6_params = {
-		.name = NULL,
+		.name = name,
 		.entries = MAX_ENTRIES,
 		.key_len = sizeof(struct in6_addr),
 		.hash_func = ip6_hash_crc,
@@ -228,17 +223,16 @@ synauth_init(struct synauth_ctx *ctx)
 		.socket_id = sid
 	};
 
-	if ((rc = rh_fbk_create(&ctx->ip_wlst, &ip_params)) != 0) {
+	if ((rc = rh_create(&ctx->ip_wlst, &ip_params)) != 0) {
 		goto done;
 	}
 	if ((rc = rh_create(&ctx->ip6_wlst, &ip6_params)) != 0) {
 		goto done;
 	}
 	/* Crypto context */
-	if (EVP_CIPHER_CTX_init(&ctx->cipher) != 1 ||
-	    EVP_CIPHER_CTX_set_padding(&ctx->cipher, 0) != 1 ||
+	EVP_CIPHER_CTX_init(&ctx->cipher);
+	if (EVP_CIPHER_CTX_set_padding(&ctx->cipher, 0) != 1 ||
 	    RAND_bytes(ctx->key, sizeof(ctx->key)) != 1 ||
-	    RAND_bytes(iv, sizeof(iv)) != 1 ||
 	    EVP_EncryptInit(&ctx->cipher, CIPHER_ALGO, ctx->key, NULL) != 1) {
 		RTE_LOG(ERR, USER1, "Could not initialize cipher context.\n");
 		goto done;
@@ -250,7 +244,7 @@ done:
 }
 
 int
-synauth_auth_ip(struct rte_mbuf *m, struct synauth_ctx *ctx)
+synauth_auth_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct ether_hdr *eh;
 	struct ipv4_hdr *ih;
@@ -261,12 +255,10 @@ synauth_auth_ip(struct rte_mbuf *m, struct synauth_ctx *ctx)
 	data = rte_pktmbuf_mtod(m, uint8_t *);
 	eh = (struct ether_hdr *)data;
 	ih = (struct ipv4_hdr *)(eh + 1);
-
-	/* XXX: assumes that the IP header has no options */
-	th = (struct tcp_hdr *)(ih + 1);
+	th = ip_l4_hdr(m);
 
 	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ih, th, aux);
+	AUTH_PKT(ctx, ih, th, aux);
 	setup_ack(th, aux);
 
 	/* IP header */
@@ -282,27 +274,26 @@ synauth_auth_ip(struct rte_mbuf *m, struct synauth_ctx *ctx)
 }
 
 int
-synauth_auth_ip6(struct rte_mbuf *m, struct synauth_ctx *ctx)
+synauth_auth_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct ether_hdr *eh;
 	struct ipv6_hdr *ih;
 	struct tcp_hdr *th;
-	uint8_t ipa[sizeof(struct in6_addr)];
+	struct in6_addr ipa;
 	uint32_t aux;
-	uint8_t *data;
 
-	eh = rte_pktmbuf_mtod(m, uint8_t *);
+	eh = rte_pktmbuf_mtod(m, struct ether_hdr *);
 	ih = (struct ipv6_hdr *)(eh + 1);
 	th = ip6_l4_hdr(m);
 
 	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ih, th, aux);
+	AUTH_PKT(ctx, ih, th, aux);
 	setup_ack(th, aux);
 
 	/* IP header */
-	rte_memcpy(&ipa, &ih->src_addr, sizeof(struct in6_addr));
+	rte_memcpy(&ipa.s6_addr, &ih->src_addr, sizeof(struct in6_addr));
 	rte_memcpy(&ih->src_addr, &ih->dst_addr, sizeof(struct in6_addr));
-	rte_mempcy(&ih->dst_addr, &ipa, sizeof(struct in6_addr));
+	rte_memcpy(&ih->dst_addr, &ipa.s6_addr, sizeof(struct in6_addr));
 
 	/* Swap source and destination ethernet addresses */
 	PKT_ETH_ADDR_SWAP(eh);
@@ -311,36 +302,39 @@ synauth_auth_ip6(struct rte_mbuf *m, struct synauth_ctx *ctx)
 }
 
 int
-synauth_test_ip(struct rte_mbuf *m, struct synauth_ctx *ctx)
+synauth_test_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct _entry *e;
 	struct ipv4_hdr *ih;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
 
-	if (likely(rh_lookup_data(ctx->ip_wlst, &ih->src_addr, &e) >= 0)) {
+	if (likely(rh_lookup_data(&ctx->ip_wlst, &ih->src_addr,
+	    (void **)&e) >= 0)) {
 		uint32_t now = US2S(TSC2US(now_tsc));
-		if (likey(e->ttl < now)) {
-			return 1;
+		if (likely(e->ttl < now)) {
+			return SYNAUTH_IP_AUTH;
 		}
 	}
 
-	return 0;
+	return SYNAUTH_OK;
 }
 
 
 int
-synauth_test_ip6(struct rte_mbuf *m, struct synauth_ctx *ctx)
+synauth_test_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct _entry *e;
 	struct ipv6_hdr *ih;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
-	if (likely(rh_lookup_data(ctx->ip6_wlst, &ih->src_addr, &e) >= 0)) {
+	if (likely(rh_lookup_data(&ctx->ip6_wlst, &ih->src_addr,
+	    (void **)&e) >= 0)) {
 		uint32_t now = US2S(TSC2US(now_tsc));
-		if (likey(e->ttl < now)) {
-			return 1;
+		if (likely(e->ttl < now)) {
+			return SYNAUTH_IP6_AUTH;
 		}
 	}
-	return 0;
+
+	return SYNAUTH_OK;
 }
