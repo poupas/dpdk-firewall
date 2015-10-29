@@ -145,7 +145,7 @@ setup_ack(struct tcp_hdr *th, uint32_t seq)
 
 	/* ACK an out-of-sequence initial sequence number */
 	th->tcp_flags |= TH_ACK;
-	th->recv_ack = th->sent_seq - 1;
+	th->recv_ack = th->sent_seq;
 	th->sent_seq = seq;
 }
 
@@ -212,6 +212,9 @@ synauth_init(struct synauth_ctx *ctx)
 		.hash_func_init_val = 0,
 		.socket_id = sid
 	};
+	if ((rc = rh_create(&ctx->ip_wlst, &ip_params)) != 0) {
+		goto done;
+	}
 
 	snprintf(name, sizeof(name), "synwl_ip6_c%d_s%d", cid, sid);
 	struct rte_hash_parameters ip6_params = {
@@ -222,13 +225,10 @@ synauth_init(struct synauth_ctx *ctx)
 		.hash_func_init_val = 0,
 		.socket_id = sid
 	};
-
-	if ((rc = rh_create(&ctx->ip_wlst, &ip_params)) != 0) {
-		goto done;
-	}
 	if ((rc = rh_create(&ctx->ip6_wlst, &ip6_params)) != 0) {
 		goto done;
 	}
+
 	/* Crypto context */
 	EVP_CIPHER_CTX_init(&ctx->cipher);
 	if (EVP_CIPHER_CTX_set_padding(&ctx->cipher, 0) != 1 ||
@@ -249,11 +249,9 @@ synauth_auth_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 	struct ether_hdr *eh;
 	struct ipv4_hdr *ih;
 	struct tcp_hdr *th;
-	uint8_t *data;
 	uint32_t aux;
 
-	data = rte_pktmbuf_mtod(m, uint8_t *);
-	eh = (struct ether_hdr *)data;
+	eh = rte_pktmbuf_mtod(m, struct ether_hdr *);
 	ih = (struct ipv4_hdr *)(eh + 1);
 	th = ip_l4_hdr(m);
 
@@ -270,6 +268,11 @@ synauth_auth_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 	/* Swap source and destination ethernet addresses */
 	PKT_ETH_ADDR_SWAP(eh);
 
+	/* Offload checksum calculations */
+	PKT_TCP_IP_TX_OFFLOAD(m, th);
+
+	m->udata64 |= PKT_META_ROUTED;
+
 	return 0;
 }
 
@@ -281,6 +284,8 @@ synauth_auth_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 	struct tcp_hdr *th;
 	struct in6_addr ipa;
 	uint32_t aux;
+
+	/* TODO: build a new packet with no header options. */
 
 	eh = rte_pktmbuf_mtod(m, struct ether_hdr *);
 	ih = (struct ipv6_hdr *)(eh + 1);
@@ -298,6 +303,8 @@ synauth_auth_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 	/* Swap source and destination ethernet addresses */
 	PKT_ETH_ADDR_SWAP(eh);
 
+	m->udata64 |= PKT_META_ROUTED;
+
 	return 0;
 }
 
@@ -309,15 +316,14 @@ synauth_test_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
 
-	if (likely(rh_lookup_data(&ctx->ip_wlst, &ih->src_addr,
-	    (void **)&e) >= 0)) {
+	if (rh_lookup_data(&ctx->ip_wlst, &ih->src_addr, (void **)&e) >= 0) {
 		uint32_t now = US2S(TSC2US(now_tsc));
 		if (likely(e->ttl < now)) {
-			return SYNAUTH_IP_AUTH;
+			return SYNAUTH_OK;
 		}
 	}
 
-	return SYNAUTH_OK;
+	return SYNAUTH_IP_AUTH;
 }
 
 
@@ -328,13 +334,12 @@ synauth_test_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 	struct ipv6_hdr *ih;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
-	if (likely(rh_lookup_data(&ctx->ip6_wlst, &ih->src_addr,
-	    (void **)&e) >= 0)) {
+	if (rh_lookup_data(&ctx->ip6_wlst, &ih->src_addr, (void **)&e) >= 0) {
 		uint32_t now = US2S(TSC2US(now_tsc));
 		if (likely(e->ttl < now)) {
-			return SYNAUTH_IP6_AUTH;
+			return SYNAUTH_OK;
 		}
 	}
 
-	return SYNAUTH_OK;
+	return SYNAUTH_IP6_AUTH;
 }

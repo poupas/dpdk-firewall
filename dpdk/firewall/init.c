@@ -201,21 +201,21 @@ init_ol_mbuf_pools(void)
 static void
 init_rings_rx(void)
 {
-	uint8_t lcore, worker = 0;
+	uint8_t iolc, wlc = 0;
 
 	/* Initialize the rings for the RX side */
-	for (lcore = 0; lcore < MAX_LCORES; lcore++) {
-		struct lc_cfg *lcp = &cfg.lcores[lcore];
+	for (iolc = 0; iolc < MAX_LCORES; iolc++) {
+		struct lc_cfg *lcp = &cfg.lcores[iolc];
 		unsigned socket_io;
 
 		if (lcp->type != LCORE_TYPE_IO || lcp->io.rx.n_nic_queues == 0) {
 			continue;
 		}
-		socket_io = rte_lcore_to_socket_id(lcore);
+		socket_io = rte_lcore_to_socket_id(iolc);
 
-		for (worker = 0; worker < MAX_LCORES; worker++) {
+		for (wlc = 0; wlc < MAX_LCORES; wlc++) {
 			char name[32];
-			struct lc_cfg *wlcp = &cfg.lcores[worker];
+			struct lc_cfg *wlcp = &cfg.lcores[wlc];
 			struct rte_ring *ring = NULL;
 
 			if (wlcp->type != LCORE_TYPE_WORKER) {
@@ -225,15 +225,11 @@ init_rings_rx(void)
 			    == 0) {
 				continue;
 			}
-			RTE_LOG(DEBUG, USER1, "Creating ring to connect IO "
-			    "RX lcore %u (socket %u) -> worker lcore %u ...\n",
-			    lcore,
-			    socket_io,
-			    worker);
+			RTE_LOG(DEBUG, USER1, "Creating ring to connect IO RX"
+			    "lcore %u (socket %u)-> worker %u (lcore %u)...\n",
+			    iolc, socket_io, wlcp->worker.id, wlc);
 			snprintf(name, sizeof(name), "ring_rx_s%u_io%u_w%u",
-			    socket_io,
-			    lcore,
-			    worker);
+			    socket_io, iolc, wlcp->worker.id);
 			ring = rte_ring_create(
 			    name,
 			    cfg.ring_rx_size,
@@ -242,8 +238,8 @@ init_rings_rx(void)
 			if (ring == NULL) {
 				rte_panic("Cannot create ring to connect RX IO "
 				    "lcore %u with worker core %u\n",
-				    lcore,
-				    worker);
+				    iolc,
+				    wlcp->worker.id);
 			}
 			lcp->io.rx.rings[lcp->io.rx.n_rings] = ring;
 			lcp->io.rx.n_rings++;

@@ -92,7 +92,9 @@ struct fw_cron {
 };
 
 static struct fw_ctx *workers[MAX_FW_LCORES];
+static struct fw_ctx *offldrs[MAX_OL_LCORES];
 rte_atomic16_t n_workers;
+rte_atomic16_t n_offldrs;
 
 static struct zone_cfg zones[MAX_ZONES];
 static uint32_t n_zones;
@@ -287,6 +289,7 @@ fw_init(void)
 	uint32_t port;
 
 	rte_atomic16_init(&n_workers);
+	rte_atomic16_init(&n_offldrs);
 
 	for (port = 0; port < MAX_NIC_PORTS; port++) {
 		struct zone_cfg *zp;
@@ -535,24 +538,24 @@ setup_pkt_acl(struct rte_mbuf *m, struct fw_ctx *ctx)
 
 static inline unsigned
 __attribute__((always_inline))
-setup_acl_search(struct rte_mbuf **pkts, uint32_t offset, struct fw_ctx *ctx,
-    uint32_t n, uint8_t *zid)
+setup_acl_search(struct rte_mbuf **pkts, struct fw_ctx *ctx, uint32_t n,
+    uint8_t *zid)
 {
 	unsigned i, nbatch;
 	uint8_t zone;
 
-	zone = PKT2ZONE(pkts[offset], ctx);
+	zone = PKT2ZONE(pkts[0], ctx);
 	*zid = zone;
 	ctx->acl.n_ip = 0;
 	ctx->acl.n_ip6 = 0;
 
 	/* Prefetch first packets */
-	for (i = offset; i < BATCH_SIZE && i < n; i++) {
+	for (i = 0; i < BATCH_SIZE && i < n; i++) {
 		rte_prefetch0(rte_pktmbuf_mtod(pkts[i], void *));
 	}
 
 	nbatch = RTE_ALIGN_FLOOR(n, BATCH_SIZE);
-	for (i = offset; i < nbatch; i += BATCH_SIZE) {
+	for (i = 0; i < nbatch; i += BATCH_SIZE) {
 		if (unlikely(PKT2ZONE(pkts[i], ctx) != zone)) {
 			return i;
 		}
@@ -641,6 +644,128 @@ test_synauth(struct rte_mbuf *m, struct synauth_ctx *ctx)
 	return r;
 }
 
+int sa;
+
+static unsigned
+synauth_ol(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
+{
+	struct worker_lc_cfg *lp;
+	struct synauth_ctx *sactx;
+	struct tcp_hdr *th;
+	unsigned i, n_sa, action;
+	int sares;
+
+#define _ACT_IGNORE	0
+#define _ACT_FORWARD	1
+#define _ACT_DROP	2
+
+	lp = ctx->cfg;
+	sactx = &ctx->sauth;
+	n_sa = 0;
+
+	for (i = 0; i < n_pkts; i++) {
+		action = _ACT_IGNORE;
+
+		if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP) {
+			th = ip_l4_hdr(pkts[i]);
+			n_sa++;
+
+			sares = synauth_test_ip(sactx, pkts[i]);
+			if (sares == SYNAUTH_OK) {
+				action = _ACT_FORWARD;
+			} else if (th->tcp_flags & TH_SYN) {
+				synauth_auth_ip(sactx, pkts[i]);
+				action = _ACT_FORWARD;
+			} else if (th->tcp_flags & TH_RST) {
+				sares = synauth_vrfy_ip(sactx, pkts[i]);
+				action = sares == SYNAUTH_OK ?
+				    _ACT_FORWARD : _ACT_DROP;
+			}
+
+		} else if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP6) {
+			th = ip6_l4_hdr(pkts[i]);
+			n_sa++;
+
+			sares = synauth_test_ip6(sactx, pkts[i]);
+			if (sares == SYNAUTH_OK) {
+				action = _ACT_FORWARD;
+			} else if (th->tcp_flags & TH_SYN) {
+				synauth_auth_ip6(sactx, pkts[i]);
+				action = _ACT_FORWARD;
+			} else if (th->tcp_flags & TH_RST) {
+				sares = synauth_vrfy_ip6(sactx, pkts[i]);
+				action = sares == SYNAUTH_OK ?
+				    _ACT_FORWARD : _ACT_DROP;
+			}
+		}
+
+		if (action == _ACT_FORWARD) {
+			fwd_nic_pkt(pkts[i], lp);
+			pkts[i] = NULL;
+
+		} else if (action == _ACT_DROP) {
+			rte_pktmbuf_free(pkts[i]);
+			pkts[i] = NULL;
+		}
+	}
+
+#undef _ACT_IGNORE
+#undef _ACT_FORWARD
+#undef _ACT_DROP
+
+	return n_sa;
+}
+
+static inline void
+handle_synauth_ol(struct worker_lc_cfg *lp, struct rte_mbuf *m)
+{
+	sa = test_synauth(m, &lp->fw.ctx->sauth);
+	if (sa == SYNAUTH_OK) {
+		fwd_nic_pkt(m, lp);
+	} else if (sa == SYNAUTH_IP_AUTH){
+		m->udata64 |= PKT_META_SYNAUTH_IP;
+		synauth_ol(lp->fw.ctx, &m, 1);
+	} else if (sa == SYNAUTH_IP6_AUTH){
+		m->udata64 |= PKT_META_SYNAUTH_IP6;
+		synauth_ol(lp->fw.ctx, &m, 1);
+	} else {
+		rte_pktmbuf_free(m);
+	}
+}
+
+static inline void
+handle_synauth_acl(struct worker_lc_cfg *lp, struct rte_mbuf *m)
+{
+	/* Offloader core */
+	if (unlikely(lp->ol == WORKER_OL_PROV)) {
+		handle_synauth_ol(lp, m);
+		return;
+	}
+
+	/* Main core */
+	switch (PKT_TYPE(m)) {
+	struct tcp_hdr *th;
+
+	case RTE_PTYPE_L3_IPV4:
+		th = ip_l4_hdr(m);
+		if (th->tcp_flags & (TH_SYN|TH_RST)) {
+			m->udata64 |= PKT_META_SYNAUTH_IP;
+			fwd_ol_pkt(m, lp);
+			return;
+		}
+		break;
+	case RTE_PTYPE_L3_IPV6:
+		th = ip6_l4_hdr(m);
+		if (th->tcp_flags & (TH_SYN|TH_RST)) {
+			m->udata64 |= PKT_META_SYNAUTH_IP6;
+			fwd_ol_pkt(m, lp);
+			return;
+		}
+		break;
+	}
+
+	fwd_nic_pkt(m, lp);
+}
 
 static inline void
 fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *m, uint32_t res)
@@ -657,27 +782,15 @@ fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *m, uint32_t res)
 		fwd_ctrl_pkt(clone, lp);
 	}
 	if (likely(res & ACL_ACTION_ACCEPT)) {
-		if (likely(!rt_is_local(m))) {
+		if (unlikely(rt_is_local(m))) {
+			m->udata64 |= PKT_META_LOCAL;
+			fwd_ctrl_pkt(m, lp);
+		} else {
 			if (res & ACL_ACTION_SYNAUTH) {
-				int sa = test_synauth(m, &lp->fw.ctx->sauth);
-
-				if (sa == SYNAUTH_OK) {
-					fwd_nic_pkt(m, lp);
-				} else if (sa == SYNAUTH_IP_AUTH){
-					m->udata64 |= PKT_META_SYNAUTH_IP;
-					fwd_ol_pkt(m, lp);
-				} else if (sa == SYNAUTH_IP6_AUTH){
-					m->udata64 |= PKT_META_SYNAUTH_IP6;
-					fwd_ol_pkt(m, lp);
-				} else {
-					rte_pktmbuf_free(m);
-				}
+				handle_synauth_acl(lp, m);
 			} else {
 				fwd_nic_pkt(m, lp);
 			}
-		} else {
-			m->udata64 |= PKT_META_LOCAL;
-			fwd_ctrl_pkt(m, lp);
 		}
 	} else {
 		pkt_dump(m, "dropping packet: ");
@@ -750,15 +863,13 @@ test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 
 	rcu_read_lock();
 	while (offset < n_pkts) {
-		unsigned n_left;
 		uint8_t zid;
 
-		n_left = n_pkts - offset;
-		offset = setup_acl_search(pkts, offset, ctx, n_left, &zid);
+		offset +=
+		    setup_acl_search(pkts + offset, ctx, n_pkts - offset, &zid);
 
 		/* IPv4 */
 		if (likely(acl->n_ip)) {
-
 			/* Apply ACLs if required */
 			if (zid < MAX_ZONES && (acl_ctx =
 			    rcu_dereference(zones[zid].ip_acl[sockid]))) {
@@ -768,8 +879,8 @@ test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 				fwd_acl_pkts(ctx->cfg, acl->ip_m, acl->ip_res,
 				    acl->n_ip);
 
-				/* Forward packets without filtering */
 			} else {
+				/* Forward packets without filtering */
 				fwd_pkts(ctx->cfg, acl->ip_m, acl->n_ip);
 			}
 		}
@@ -786,8 +897,8 @@ test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 				fwd_acl_pkts(ctx->cfg, acl->ip6_m, acl->ip6_res,
 				    acl->n_ip6);
 
-				/* Forward packets without filtering */
 			} else {
+				/* Forward packets without filtering */
 				fwd_pkts(ctx->cfg, acl->ip6_m, acl->n_ip6);
 			}
 		}
@@ -811,80 +922,16 @@ input(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 		RTE_LOG(CRIT, USER1, "FW: error receiving from ring!\n");
 		return 0;
 	}
-	if (unlikely(n_rx == 0)) {
-		return 0;
-	}
-#ifdef APP_STATS
-	ctx->cfg->irings_pkts[ring_n] += n_rx;
-#endif
 
-	test_pkts(ctx, pkts, n_rx);
+	if (likely(n_rx > 0)) {
+		test_pkts(ctx, pkts, n_rx);
+
+#ifdef APP_STATS
+		ctx->cfg->irings_pkts[ring_n] += n_rx;
+#endif
+	}
 
 	return n_rx;
-}
-
-static unsigned
-synauth_ol(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
-{
-	struct worker_lc_cfg *lp;
-	struct synauth_ctx *sactx;
-	struct tcp_hdr *th;
-	unsigned i, n_sa, action;
-	int sares;
-
-#define _ACT_IGNORE	0
-#define _ACT_FORWARD	1
-#define _ACT_DROP	2
-
-	lp = ctx->cfg;
-	sactx = &ctx->sauth;
-	n_sa = 0;
-
-	for (i = 0; i < n_pkts; i++) {
-		action = _ACT_IGNORE;
-
-		if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP) {
-			th = ip_l4_hdr(pkts[i]);
-			n_sa++;
-
-			if (th->tcp_flags & TH_SYN) {
-				synauth_auth_ip(sactx, pkts[i]);
-				action = _ACT_DROP;
-			} else if (th->tcp_flags & TH_RST) {
-				sares = synauth_vrfy_ip(sactx, pkts[i]);
-				action = sares == SYNAUTH_OK ?
-				    _ACT_FORWARD : _ACT_DROP;
-			}
-
-		} else if (pkts[i]->udata64 & PKT_META_SYNAUTH_IP6) {
-			th = ip6_l4_hdr(pkts[i]);
-			n_sa++;
-
-			if (th->tcp_flags & TH_SYN) {
-				synauth_auth_ip6(sactx, pkts[i]);
-				action = _ACT_DROP;
-			} else if (th->tcp_flags & TH_RST) {
-				sares = synauth_vrfy_ip6(sactx, pkts[i]);
-				action = sares == SYNAUTH_OK ?
-				    _ACT_FORWARD : _ACT_DROP;
-			}
-		}
-
-		if (action == _ACT_FORWARD) {
-			fwd_nic_pkt(pkts[i], lp);
-			pkts[i] = NULL;
-
-		} else if (action == _ACT_DROP) {
-			rte_pktmbuf_free(pkts[i]);
-			pkts[i] = NULL;
-		}
-	}
-
-#undef _ACT_IGNORE
-#undef _ACT_FORWARD
-#undef _ACT_DROP
-
-	return n_sa;
 }
 
 static inline uint32_t
@@ -998,6 +1045,9 @@ init_ctx(struct worker_lc_cfg *lp)
 	lp->fw.ctx = ctx;
 	lp->rt.ovlan = cfg.ovlan;
 
+	n = rte_atomic16_add_return(&n_workers, 1) - 1;
+	workers[n] = ctx;
+
 	/* Allocate required structures for offload providers */
 	if (lp->ol == WORKER_OL_PROV) {
 		if (frag_init(&ctx->frag, cfg.ol_pools[socket],
@@ -1010,9 +1060,10 @@ init_ctx(struct worker_lc_cfg *lp)
 			rte_panic("Could not initialize syn authentication "
 			    "context. Shutting down...");
 		}
+
+		n = rte_atomic16_add_return(&n_offldrs, 1) - 1;
+		offldrs[n] = ctx;
 	}
-	n = rte_atomic16_add_return(&n_workers, 1) - 1;
-	workers[n] = ctx;
 
 	return ctx;
 }
@@ -1030,6 +1081,9 @@ fw_lcore_main_loop_cnt(struct worker_lc_cfg *lp)
 	n_rings = lp->n_irings;
 	ctx = init_ctx(lp);
 	idle = 0;
+
+	RTE_LOG(DEBUG, USER1, "Worker %u checking in: lcore: %u, ol: %u.\n",
+	    lp->id, rte_lcore_id(), lp->ol);
 
 	for (;;) {
 		cron_cnt(ctx, &cron);
@@ -1060,6 +1114,9 @@ fw_lcore_main_loop_tsc(struct worker_lc_cfg *lp)
 	n_rings = lp->n_irings;
 	ctx = init_ctx(lp);
 	idle = 0;
+
+	RTE_LOG(DEBUG, USER1, "Worker %u checking in: lcore: %u, ol: %u.\n",
+	    lp->id, rte_lcore_id(), lp->ol);
 
 	for (;;) {
 		cron_tsc(ctx, &cron);

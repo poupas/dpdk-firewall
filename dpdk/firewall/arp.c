@@ -185,7 +185,7 @@ create_request(in_addr_t ip, uint16_t vlan)
 	m->vlan_tci = vlan;
 
 	/* TODO: choose port randomly? */
-	m->port = 4;
+	m->port = 0;
 
 	/* Let the forwarding code know that no routing decision is required */
 	m->udata64 = PKT_META_ROUTED;

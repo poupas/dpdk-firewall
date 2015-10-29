@@ -235,6 +235,9 @@ struct mbuf_extra {
 #define IPPROTO_IPV4 4
 #endif
 
+#define PKT_IP_HDR_LEN(hdr)	(((hdr)->version_ihl & 0x0f) << 2)
+#define PKT_VLANID(vlan_tci)	(vlan_tci & 0x0fff)
+
 #define PKT_IP_HDR(m, hdr)					\
 	do {							\
 		(hdr) = (struct ipv4_hdr *)			\
@@ -254,6 +257,19 @@ struct mbuf_extra {
 		m->l3_len = sizeof(struct ipv4_hdr);		\
 	} while (0)
 
+#define PKT_TCP_IP_TX_OFFLOAD(m, th)					   \
+	do {								   \
+	struct ipv4_hdr *ih;						   \
+	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr)); \
+	m->ol_flags |= PKT_TX_IP_CKSUM;					   \
+	m->ol_flags |= PKT_TX_IPV4;					   \
+	m->ol_flags |= PKT_TX_TCP_CKSUM;				   \
+	ih->hdr_checksum = 0;						   \
+	th->cksum = rte_ipv4_phdr_cksum(ih, m->ol_flags);		   \
+	m->l2_len = sizeof(struct ether_hdr);				   \
+	m->l3_len = PKT_IP_HDR_LEN(ih);					   \
+	} while (0)
+
 #define PKT_TYPE(m) 						\
 	((m) ?							\
 		(m)->packet_type ? 				\
@@ -268,7 +284,7 @@ struct mbuf_extra {
 		struct ether_addr addr;				\
 		ether_addr_copy(&hdr->s_addr, &addr);		\
 		ether_addr_copy(&hdr->d_addr, &hdr->s_addr);	\
-		ether_addr_copy(&addr, &hdr->s_addr);		\
+		ether_addr_copy(&addr, &hdr->d_addr);		\
 	} while (0)
 
 /*
@@ -287,10 +303,6 @@ struct mbuf_extra {
 		(m)->udata64 = 0;				\
 		rte_pktmbuf_free((m));				\
 	} while (0)
-
-#define PKT_VLANID(vlan_tci) (vlan_tci & 0x0fff)
-
-#define PKT_IP_HDR_LEN(hdr) (((hdr)->version_ihl & 0x0f) << 2)
 
 static inline uint32_t
 ip_hash_crc(const void *data, __rte_unused uint32_t datalen, uint32_t initval)

@@ -50,6 +50,8 @@
 #include "util.h"
 #include "packet.h"
 
+static struct ether_addr nullea;
+
 static inline int
 __attribute__((always_inline))
 rt_is_local(struct rte_mbuf *m)
@@ -93,27 +95,36 @@ static inline void
 rt_refresh_gws(struct rt_ctx *ctx)
 {
 	struct ether_addr *macs;
+	uint16_t n_gws;
 	int i;
 
 	macs = ctx->igws;
+	n_gws = 0;
 	for (i = 0; i < cfg.n_igws; i++) {
 		if (memcmp(&cfg.igws[i].mac, &macs[i],
 		    sizeof(struct ether_addr))) {
 			ether_addr_copy(&cfg.igws[i].mac, &macs[i]);
 		}
+		if (memcmp(&macs[i], &nullea, sizeof(nullea)) != 0) {
+			n_gws++;
+		}
 	}
+	ctx->n_igws = n_gws;
 
 	macs = ctx->ogws;
+	n_gws = 0;
 	for (i = 0; i < cfg.n_ogws; i++) {
 		if (memcmp(&cfg.ogws[i].mac, &macs[i],
 		    sizeof(struct ether_addr))) {
 			ether_addr_copy(&cfg.ogws[i].mac, &macs[i]);
 		}
+		if (memcmp(&macs[i], &nullea, sizeof(nullea)) != 0) {
+			n_gws++;
+		}
 	}
+	ctx->n_ogws = n_gws;
 
 	LOG(DEBUG, USER1, "Updating gateway mac addresses.\n");
-	ctx->n_igws = cfg.n_igws;
-	ctx->n_ogws = cfg.n_ogws;
 	ctx->ovlan = cfg.ovlan;
 	ctx->gws_ts = cfg.gws_ts;
 }
@@ -158,15 +169,18 @@ __attribute__((always_inline))
 			rte_pktmbuf_free(m);
 			return NULL;
 		}
+
 		slot %= ctx->n_ogws;
 		return &ctx->ogws[slot];
 
 	} else {
 		uint64_t slot = hash_pkt(m, eh, FLOW_VLAN_IN);
 		if (unlikely(ctx->n_igws == 0)) {
+			/* No gateways available yet. Drop the packet... */
 			rte_pktmbuf_free(m);
 			return NULL;
 		}
+
 		slot %= ctx->n_igws;
 		return &ctx->igws[slot];
 	}

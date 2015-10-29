@@ -71,13 +71,20 @@ __attribute__((always_inline))
 		struct ether_addr *ea;
 
 		eh = rte_pktmbuf_mtod(m, struct ether_hdr *);
-		ea = rt_select_gw(m, eh, &lp->rt);
 		if (unlikely(lp->rt.gws_ts != cfg.gws_ts)) {
 			rt_refresh_gws(&lp->rt);
-			ea = rt_select_gw(m, eh, &lp->rt);
 		}
+		ea = rt_select_gw(m, eh, &lp->rt);
+		/* Ensure that a valid gateway exists */
+		if (unlikely(ea == NULL)) {
+			rte_pktmbuf_free(m);
+			return;
+		}
+
+		ether_addr_copy(&eh->d_addr, &eh->s_addr);
 		ether_addr_copy(ea, &eh->d_addr);
 	}
+
 	port = m->port;
 
 	/* Request the NIC to place the vlan tag if required */

@@ -53,7 +53,7 @@ frag_init(struct frag_ctx *ctx, struct rte_mempool *pool, uint16_t flows,
 	uint64_t frag_cycles;
 	unsigned int socket;
 
-	socket = rte_lcore_id();
+	socket = rte_socket_id();
 	frag_cycles = (rte_get_tsc_hz() + MS_PER_S - 1) / MS_PER_S * ttl;
 
 	ctx->tbl = rte_ip_frag_table_create(

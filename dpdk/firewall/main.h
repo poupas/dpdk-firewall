@@ -110,7 +110,11 @@
 #endif
 
 #ifndef MAX_FW_LCORES
-#define MAX_FW_LCORES 2
+#define MAX_FW_LCORES 4
+#endif
+
+#ifndef MAX_OL_LCORES
+#define MAX_OL_LCORES 2
 #endif
 
 #ifndef MAX_OL_LCORES
