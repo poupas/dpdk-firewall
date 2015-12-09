@@ -161,8 +161,8 @@ ctrl_lcore_main_loop(struct worker_lc_cfg *lp)
 
 		if (unlikely(now_tsc > cron.flush)) {
 			if (lp->pending) {
-				flush_nic_buffers(lp);
 				lp->pending = 0;
+				flush_nic_buffers(lp);
 			}
 			cron.flush = now_tsc + US2TSC(LCORE_WORKER_FLUSH_US);
 		}

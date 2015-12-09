@@ -134,26 +134,32 @@ __attribute__((always_inline))
 	uint64_t
 	         hash_pkt(struct rte_mbuf *m, struct ether_hdr *eh, uint8_t flow)
 {
-	if (likely(PKT_TYPE(m) == RTE_PTYPE_L3_IPV4)) {
+	uint64_t r;
+
+	r = 0;
+
+	if (PKT_TYPE(m) == RTE_PTYPE_L3_IPV4) {
 		struct ipv4_hdr *iph = (struct ipv4_hdr *)(eh + 1);
 
 		if (flow == FLOW_VLAN_OUT) {
-			return rte_hash_crc_4byte(iph->src_addr, 0);
+			r = rte_hash_crc_4byte(iph->src_addr, 0);
 		} else {
-			return rte_hash_crc_4byte(iph->dst_addr, 0);
+			r = rte_hash_crc_4byte(iph->dst_addr, 0);
 		}
 	} else {
 		struct ipv6_hdr *iph = (struct ipv6_hdr *)(eh + 1);
-		uint64_t *r;
+		uint64_t *p;
 
 		if (flow == FLOW_VLAN_OUT) {
-			r = (uint64_t *)(&(iph->src_addr) + 8);
-			return rte_hash_crc_8byte(*r, 0);
+			p = (uint64_t *)(&(iph->src_addr) + 8);
+			r = rte_hash_crc_8byte(*p, 0);
 		} else {
-			r = (uint64_t *)(&(iph->dst_addr) + 8);
-			return rte_hash_crc_8byte(*r, 8);
+			p = (uint64_t *)(&(iph->dst_addr) + 8);
+			r = rte_hash_crc_8byte(*p, 8);
 		}
 	}
+
+	return r;
 }
 
 static inline

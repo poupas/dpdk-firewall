@@ -94,7 +94,7 @@ __attribute__((always_inline))
 	burst = cfg.worker_write_burst_size;
 	n_mbufs = lp->obuf[port].n_mbufs;
 	lp->obuf[port].array[n_mbufs++] = m;
-	if (likely(n_mbufs < burst)) {
+	if (n_mbufs < burst) {
 		lp->obuf[port].n_mbufs = n_mbufs;
 		lp->pending = 1;
 		return;
@@ -125,7 +125,7 @@ __attribute__((always_inline))
 	n_mbufs = ring->obuf.n_mbufs;
 
 	ring->obuf.array[n_mbufs++] = m;
-	if (likely(n_mbufs < burst)) {
+	if (n_mbufs < burst) {
 		ring->obuf.n_mbufs = n_mbufs;
 		lp->pending = 1;
 		return;
@@ -183,10 +183,10 @@ flush_nic_buffers(struct worker_lc_cfg *lp)
 		if (likely(lp->obuf_flush[i] == 0 ||
 		    lp->obuf[i].n_mbufs == 0)) {
 			lp->obuf_flush[i] = 1;
+			lp->pending = lp->obuf[i].n_mbufs != 0;
 			continue;
 		}
 		util_flush_sp_ring_buffer(lp->orings[i], &lp->obuf[i]);
-
 		lp->obuf_flush[i] = 1;
 	}
 }
@@ -203,6 +203,7 @@ flush_ctrl_buffers(struct worker_lc_cfg *lp)
 		if (likely(ring->obuf_flush == 0 ||
 		    ring->obuf.n_mbufs == 0)) {
 			ring->obuf_flush = 1;
+			lp->pending = ring->obuf.n_mbufs != 0;
 			continue;
 		}
 		util_flush_sp_ring_buffer(ring->ring, &ring->obuf);
@@ -222,6 +223,7 @@ flush_ol_buffers(struct worker_lc_cfg *lp)
 		if (likely(ring->obuf_flush == 0 ||
 		    ring->obuf.n_mbufs == 0)) {
 			ring->obuf_flush = 1;
+			lp->pending = ring->obuf.n_mbufs != 0;
 			continue;
 		}
 		util_flush_sp_ring_buffer(ring->ring, &ring->obuf);

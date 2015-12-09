@@ -125,7 +125,7 @@
 
 #define IDLE_COUNT_CHK	10
 #define IDLE_COUNT_SOFT	100
-#define IDLE_COUNT_HARD	1000
+#define IDLE_COUNT_HARD	250
 
 #define WORKER_REQ_RESET_CNT (1 << 1)
 

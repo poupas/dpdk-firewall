@@ -94,12 +94,12 @@ rh_add_key_data(struct rollhash *rh, const void *key, void *data,
 	int32_t rc;
 
 	rc = rte_hash_add_key_data(rh->cur.h, key, data);
-	if (likely(rc >= 0)) {
+	if (likely(rc == 0)) {
 		rh->cur.ttl = now_us + HASH_TTL_US;
 		return rc;
 	}
 	/* Check if previous hash table may still have valid entries */
-	if (unlikely(rh->old.ttl < now_us)) {
+	if (rh->old.ttl < now_us) {
 		return rc;
 	}
 	/* Roll-over hashtables */
@@ -123,7 +123,7 @@ rh_lookup_data(struct rollhash *rh, const void *key, void **data)
 	int rc;
 
 	rc = rte_hash_lookup_data(rh->cur.h, key, data);
-	if (rc >= 0) {
+	if (rc == 0) {
 		return rc;
 	}
 	return rte_hash_lookup_data(rh->old.h, key, data);

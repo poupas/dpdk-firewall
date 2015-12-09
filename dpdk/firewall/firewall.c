@@ -337,13 +337,12 @@ setup_ip_acl_data(struct rte_mbuf **mr, struct fw_ctx *ctx)
 	 * This check ensures that assumption is valid.
 	 * Stuff will break otherwise (see ip_l4_hdr in packet.h).
 	 */
-	if (unlikely(PKT_IP_HDR_LEN(ih) != IP_HDR_LEN)) {
+	if (PKT_IP_HDR_LEN(ih) != IP_HDR_LEN) {
 		return NULL;
 	}
 
 	/* Check for fragments */
-	if (unlikely(rte_ipv4_frag_pkt_is_fragmented(ih) &&
-	    ctx->cfg->rt.reassembly)) {
+	if (rte_ipv4_frag_pkt_is_fragmented(ih) && ctx->cfg->rt.reassembly) {
 		uint64_t udata64;
 
 		ehp = NULL;
@@ -424,7 +423,7 @@ setup_ip6_acl_data(struct rte_mbuf **mr, struct fw_ctx *ctx)
 	exthdrs = ip6_parse_hdrs(m, &l4hdr, &l4proto);
 
 	/* No extra headers */
-	if (likely(exthdrs == 0 && l4hdr != NULL)) {
+	if (exthdrs == 0 && l4hdr != NULL) {
 		return IP6_DATA_2PROTO(rte_pktmbuf_mtod(m, uint8_t *));
 	}
 	/* Extra headers but not a fragment */
@@ -556,22 +555,22 @@ setup_acl_search(struct rte_mbuf **pkts, struct fw_ctx *ctx, uint32_t n,
 
 	nbatch = RTE_ALIGN_FLOOR(n, BATCH_SIZE);
 	for (i = 0; i < nbatch; i += BATCH_SIZE) {
-		if (unlikely(PKT2ZONE(pkts[i], ctx) != zone)) {
+		if (PKT2ZONE(pkts[i], ctx) != zone) {
 			return i;
 		}
 		setup_pkt_acl(pkts[i], ctx);
 
-		if (unlikely(PKT2ZONE(pkts[i + 1], ctx) != zone)) {
+		if (PKT2ZONE(pkts[i + 1], ctx) != zone) {
 			return i + 1;
 		}
 		setup_pkt_acl(pkts[i + 1], ctx);
 
-		if (unlikely(PKT2ZONE(pkts[i + 2], ctx) != zone)) {
+		if (PKT2ZONE(pkts[i + 2], ctx) != zone) {
 			return i + 2;
 		}
 		setup_pkt_acl(pkts[i + 2], ctx);
 
-		if (unlikely(PKT2ZONE(pkts[i + 3], ctx) != zone)) {
+		if (PKT2ZONE(pkts[i + 3], ctx) != zone) {
 			return i + 3;
 		}
 		setup_pkt_acl(pkts[i + 3], ctx);
@@ -579,7 +578,7 @@ setup_acl_search(struct rte_mbuf **pkts, struct fw_ctx *ctx, uint32_t n,
 
 	/* Process remaining packets */
 	for (; i < n; i++) {
-		if (unlikely(PKT2ZONE(pkts[i], ctx) != zone)) {
+		if (PKT2ZONE(pkts[i], ctx) != zone) {
 			return i;
 		}
 		setup_pkt_acl(pkts[i], ctx);
@@ -643,8 +642,6 @@ test_synauth(struct rte_mbuf *m, struct synauth_ctx *ctx)
 
 	return r;
 }
-
-int sa;
 
 static unsigned
 synauth_ol(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
@@ -719,6 +716,8 @@ synauth_ol(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 static inline void
 handle_synauth_ol(struct worker_lc_cfg *lp, struct rte_mbuf *m)
 {
+	int sa;
+
 	sa = test_synauth(m, &lp->fw.ctx->sauth);
 	if (sa == SYNAUTH_OK) {
 		fwd_nic_pkt(m, lp);
@@ -737,7 +736,7 @@ static inline void
 handle_synauth_acl(struct worker_lc_cfg *lp, struct rte_mbuf *m)
 {
 	/* Offloader core */
-	if (unlikely(lp->ol == WORKER_OL_PROV)) {
+	if (lp->ol == WORKER_OL_PROV) {
 		handle_synauth_ol(lp, m);
 		return;
 	}
@@ -781,7 +780,7 @@ fwd_acl_pkt(struct worker_lc_cfg *lp, struct rte_mbuf *m, uint32_t res)
 		clone = rte_pktmbuf_clone(m, cfg.pools[rte_socket_id()]);
 		fwd_ctrl_pkt(clone, lp);
 	}
-	if (likely(res & ACL_ACTION_ACCEPT)) {
+	if (res & ACL_ACTION_ACCEPT) {
 		if (unlikely(rt_is_local(m))) {
 			m->udata64 |= PKT_META_LOCAL;
 			fwd_ctrl_pkt(m, lp);
@@ -869,7 +868,7 @@ test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 		    setup_acl_search(pkts + offset, ctx, n_pkts - offset, &zid);
 
 		/* IPv4 */
-		if (likely(acl->n_ip)) {
+		if (acl->n_ip) {
 			/* Apply ACLs if required */
 			if (zid < MAX_ZONES && (acl_ctx =
 			    rcu_dereference(zones[zid].ip_acl[sockid]))) {
@@ -886,7 +885,7 @@ test_pkts(struct fw_ctx *ctx, struct rte_mbuf **pkts, uint32_t n_pkts)
 		}
 
 		/* IPv6 */
-		if (likely(acl->n_ip6)) {
+		if (acl->n_ip6) {
 			/* Apply ACLs if required */
 			if (zid < MAX_ZONES && (acl_ctx =
 			    rcu_dereference(zones[zid].ip6_acl[sockid]))) {
@@ -923,13 +922,11 @@ input(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 		return 0;
 	}
 
-	if (likely(n_rx > 0)) {
-		test_pkts(ctx, pkts, n_rx);
+	test_pkts(ctx, pkts, n_rx);
 
 #ifdef APP_STATS
 		ctx->cfg->irings_pkts[ring_n] += n_rx;
 #endif
-	}
 
 	return n_rx;
 }
@@ -949,7 +946,7 @@ input_ol(struct fw_ctx *ctx, uint32_t burst, uint32_t ring_n)
 		RTE_LOG(CRIT, USER1, "FW: error receiving from ring!\n");
 		return 0;
 	}
-	if (unlikely(n_rx == 0)) {
+	if (n_rx == 0) {
 		return 0;
 	}
 #ifdef APP_STATS
@@ -978,10 +975,10 @@ cron_cnt(struct fw_ctx *ctx, struct fw_cron *cron)
 	    (unlikely(cron->flush == LCORE_WORKER_FLUSH))) {
 		cron->flush = 0;
 		if (ctx->cfg->pending) {
+			ctx->cfg->pending = 0;
 			flush_nic_buffers(ctx->cfg);
 			flush_ctrl_buffers(ctx->cfg);
 			flush_ol_buffers(ctx->cfg);
-			ctx->cfg->pending = 0;
 		}
 	}
 	if (LCORE_WORKER_TASKS &&
@@ -1007,13 +1004,13 @@ static inline void
 cron_tsc(struct fw_ctx *ctx, struct fw_cron *cron)
 {
 	uint64_t now = now_tsc;
-
 	if (unlikely(now > cron->flush)) {
 		if (ctx->cfg->pending) {
+			/* Pending may be reset by the flush handler */
+			ctx->cfg->pending = 0;
 			flush_nic_buffers(ctx->cfg);
 			flush_ctrl_buffers(ctx->cfg);
 			flush_ol_buffers(ctx->cfg);
-			ctx->cfg->pending = 0;
 		}
 		cron->flush = now + US2TSC(LCORE_WORKER_FLUSH_US);
 	}

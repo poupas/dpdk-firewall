@@ -204,7 +204,7 @@ tap_fwd_pkts_to_nic(struct worker_lc_cfg *lp, uint32_t burst)
 		for (pkt = 0; pkt < burst; pkt++) {
 			m = rte_pktmbuf_alloc(pool);
 			if (m == NULL) {
-				LOG(DEBUG, USER1, "Cannot allocate mbuf.\n");
+				RTE_LOG(DEBUG, USER1, "Cannot allocate mbuf.\n");
 				continue;
 			}
 			ret = read(fd, rte_pktmbuf_mtod(m, void *), MBUF_SIZE);

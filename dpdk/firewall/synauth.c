@@ -41,13 +41,20 @@
 #include "packet.h"
 #include "synauth.h"
 
-#define MAX_ENTRIES	1 << 21	/* 2 million */
+#define MAXSEQ		(0xffffffff)
+#define RCV_WINDOW	(0xffff)
+#define COOKIE_MASK	(0x0000ffff)
+
+#define MAX_ENTRIES	(1 << 21)	/* 2 million */
 #define KEY_TTL_US	(uint64_t)(1 * 60 * US_PER_S)	/* 1 minutes */
 #define IP_TTL_S	(uint32_t)(5 * 60)	/* 5 minutes */
 
-struct _entry {
-	uint32_t ttl;
-	int32_t score;
+union _entry {
+	struct {
+		uint32_t ttl;
+		int32_t score;
+	} s;
+	void *ptr;
 };
 
 #define AUTH_PKT(ctx, ih, th, r)					      \
@@ -56,6 +63,16 @@ struct _entry {
 	(r) = data_hash_crc(&(th)->src_port, sizeof((th)->src_port) * 2, r);  \
 	(r) = authenticate(ctx, &(r), sizeof(r));			      \
 	} while (0)
+
+#define ADD_COOKIE(seq, cookie, r)					\
+	do {								\
+		r = (seq & ~COOKIE_MASK) | (cookie & COOKIE_MASK);	\
+		if (r >= seq) {						\
+			r -= (RCV_WINDOW + 1);				\
+		}							\
+	} while (0)
+
+#define GET_COOKIE(seq) (seq & COOKIE_MASK)
 
 static void
 rekey_context(struct synauth_ctx *ctx, uint64_t now)
@@ -78,14 +95,13 @@ authenticate(struct synauth_ctx *ctx, void *data, size_t inlen)
 {
 	uint8_t buf[CIPHER_BLOCK_SIZE];
 	uint64_t now;
-	uint32_t r;
+	uint32_t *r;
 	int outlen;
 
 	assert(sizeof(buf) >= inlen);
 
 	memset(buf, 0, sizeof(buf));
 	rte_memcpy(buf, data, inlen);
-	r = 0;
 	now = now_tsc;
 
 	if (unlikely(ctx->key_ttl > now)) {
@@ -96,46 +112,47 @@ authenticate(struct synauth_ctx *ctx, void *data, size_t inlen)
 	EVP_EncryptUpdate(&ctx->cipher, buf, &outlen, buf, sizeof(buf));
 	EVP_EncryptFinal(&ctx->cipher, buf + outlen, &outlen);
 
-	r = *(uint32_t *)(&(buf[outlen - sizeof(uint32_t)]));
+	r = (uint32_t *)(&(buf[outlen - sizeof(uint32_t)]));
 
-	return r;
+	return *r;
 }
 
 static int
 trust_ip(struct synauth_ctx *ctx, struct ipv4_hdr *ih)
 {
-	struct _entry e;
+	union _entry e;
 	uint64_t now_us;
 	uint32_t now_s;
 
 	now_us = TSC2US(now_tsc);
 	now_s = US2S(now_us);
 
-	e.score = 0;
-	e.ttl = now_s + IP_TTL_S;
+	e.s.score = 0;
+	e.s.ttl = now_s + IP_TTL_S;
 
-	return rh_add_key_data(&ctx->ip_wlst, ih, &e, now_us);
+	return rh_add_key_data(&ctx->ip_wlst, &ih->src_addr, e.ptr, now_us);
 }
 
 static int
 trust_ip6(struct synauth_ctx *ctx, struct ipv6_hdr *ih)
 {
-	struct _entry e;
+	union _entry e;
 	uint64_t now_us;
 	uint32_t now_s;
 
 	now_us = TSC2US(now_tsc);
 	now_s = US2S(now_us);
 
-	e.score = 0;
-	e.ttl = now_s + IP_TTL_S;
+	e.s.score = 0;
+	e.s.ttl = now_s + IP_TTL_S;
 
-	return rh_add_key_data(&ctx->ip6_wlst, ih, &e, now_us);
+	return rh_add_key_data(&ctx->ip6_wlst, &ih->src_addr, e.ptr, now_us);
 }
 
 static void
-setup_ack(struct tcp_hdr *th, uint32_t seq)
+setup_ack(struct tcp_hdr *th, uint32_t cookie)
 {
+	uint32_t seq, ack;
 	uint16_t port;
 
 	port = th->src_port;
@@ -145,8 +162,19 @@ setup_ack(struct tcp_hdr *th, uint32_t seq)
 
 	/* ACK an out-of-sequence initial sequence number */
 	th->tcp_flags |= TH_ACK;
-	th->recv_ack = th->sent_seq;
-	th->sent_seq = seq;
+	th->rx_win = _htons(RCV_WINDOW);
+
+	seq = _ntohl(th->sent_seq);
+	ack = _ntohl(th->recv_ack);
+	ADD_COOKIE(seq, cookie, ack);
+
+	/*
+	LOG(DEBUG, USER1, "[SA] cookie: %u, GET_COOKIE(seq): %u\n",
+	    GET_COOKIE(cookie), GET_COOKIE(ack));
+	*/
+
+	th->sent_seq = th->recv_ack - 1;
+	th->recv_ack = _htonl(ack);
 }
 
 int
@@ -154,19 +182,23 @@ synauth_vrfy_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct ipv4_hdr *ih;
 	struct tcp_hdr *th;
-	uint32_t aux;
+	uint32_t seq, cookie;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
 	th = ip_l4_hdr(m);
 
 	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ctx, ih, th, aux);
-
-	if (aux == th->recv_ack) {
+	AUTH_PKT(ctx, ih, th, cookie);
+	seq = _ntohl(th->sent_seq);
+	if (GET_COOKIE(seq) == GET_COOKIE(cookie)) {
 		trust_ip(ctx, ih);
 		return SYNAUTH_OK;
 	}
 
+	/*
+	LOG(DEBUG, USER1, "[SA] check failed: actual: %u, expected: %u\n",
+			GET_COOKIE(cookie), GET_COOKIE(seq));
+	*/
 	return SYNAUTH_INVALID;
 }
 
@@ -175,15 +207,15 @@ synauth_vrfy_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
 	struct ipv6_hdr *ih;
 	struct tcp_hdr *th;
-	uint32_t aux;
+	uint32_t seq, cookie;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
 	th = ip6_l4_hdr(m);
 
 	/* TCP initial seqno (srcip + dstip + srcport + dstport) */
-	AUTH_PKT(ctx, ih, th, aux);
-
-	if (th->recv_ack == aux) {
+	AUTH_PKT(ctx, ih, th, cookie);
+	seq = _ntohl(th->sent_seq);
+	if (GET_COOKIE(seq) == GET_COOKIE(cookie)) {
 		trust_ip6(ctx, ih);
 		return SYNAUTH_OK;
 	}
@@ -311,14 +343,17 @@ synauth_auth_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 int
 synauth_test_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
-	struct _entry *e;
+	void *ptr;
 	struct ipv4_hdr *ih;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
 
-	if (rh_lookup_data(&ctx->ip_wlst, &ih->src_addr, (void **)&e) >= 0) {
+	if (rh_lookup_data(&ctx->ip_wlst, &ih->src_addr, &ptr) == 0) {
+		union _entry e;
 		uint32_t now = US2S(TSC2US(now_tsc));
-		if (likely(e->ttl < now)) {
+		e.ptr = ptr;
+
+		if (likely(e.s.ttl > now)) {
 			return SYNAUTH_OK;
 		}
 	}
@@ -330,13 +365,16 @@ synauth_test_ip(struct synauth_ctx *ctx, struct rte_mbuf *m)
 int
 synauth_test_ip6(struct synauth_ctx *ctx, struct rte_mbuf *m)
 {
-	struct _entry *e;
+	void *ptr;
 	struct ipv6_hdr *ih;
 
 	ih = rte_pktmbuf_mtod_offset(m, void *, sizeof(struct ether_hdr));
-	if (rh_lookup_data(&ctx->ip6_wlst, &ih->src_addr, (void **)&e) >= 0) {
+	if (rh_lookup_data(&ctx->ip6_wlst, &ih->src_addr, &ptr) == 0) {
+		union _entry e;
 		uint32_t now = US2S(TSC2US(now_tsc));
-		if (likely(e->ttl < now)) {
+		e.ptr = ptr;
+
+		if (likely(e.s.ttl > now)) {
 			return SYNAUTH_OK;
 		}
 	}

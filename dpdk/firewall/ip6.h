@@ -54,6 +54,9 @@
 #define IP6_EH_UNKNOWN	(1 << 8)
 #define IP6_EH_INVALID	(1 << 9)
 
+/*
+ * This code is derived from FreeBSD: <url>
+ */
 static inline uint32_t
 ip6_parse_hdrs(struct rte_mbuf *m, uint8_t **l4hdr, uint16_t *l4proto)
 {

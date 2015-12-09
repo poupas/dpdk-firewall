@@ -100,7 +100,7 @@ update_from_arp(const struct rte_mbuf *m, const uint8_t *data, uint64_t now)
 		}
 		return NULL;
 	}
-	if (likely(memcmp(&ea->arp_sha, &gwa->mac, ETHER_ADDR_LEN) == 0)) {
+	if (memcmp(&ea->arp_sha, &gwa->mac, ETHER_ADDR_LEN) == 0) {
 		//RTE_LOG(DEBUG, USER1, "Already have latest mac address. "
 		    // "Ignoring...\n");
 		gwa->update_ts = now;
@@ -128,7 +128,7 @@ update_from_ip(const struct rte_mbuf *m, const uint8_t *data, uint64_t now)
 		    //"ARP");
 		return NULL;
 	}
-	if (likely(memcmp(&eh->s_addr, &gwa->mac, ETHER_ADDR_LEN) == 0)) {
+	if (memcmp(&eh->s_addr, &gwa->mac, ETHER_ADDR_LEN) == 0) {
 		//LOG(DEBUG, USER1, "%4s already have latest mac address. "
 		    // "Ignoring...\n", "ARP");
 		gwa->update_ts = now;

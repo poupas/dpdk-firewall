@@ -178,7 +178,7 @@ pkt_add_vlan_hdr(struct rte_mbuf *m)
 	data = rte_pktmbuf_mtod(m, uint8_t *);
 	size = rte_pktmbuf_data_len(m);
 
-	if (likely(PKT_VLANID(m->vlan_tci) != 0)) {
+	if (PKT_VLANID(m->vlan_tci) != 0) {
 		struct ether_hdr *eh;
 		struct vlan_hdr *vh;
 		uint8_t *hole;

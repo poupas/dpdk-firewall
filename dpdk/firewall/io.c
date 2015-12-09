@@ -51,7 +51,7 @@
 #include "runtime.h"
 #include "packet.h"
 
-#define FLUSH_TX_PORT(lp, port, n_pkts)					\
+#define FLUSH_TX_PORT(lp, port)						\
 	do {								\
 		n_pkts = rte_eth_tx_burst(				\
 		    port,						\
@@ -83,7 +83,7 @@ __attribute__((always_inline))
 
 	n_mbufs = lp->rx.obuf[worker].n_mbufs;
 	lp->rx.obuf[worker].array[n_mbufs++] = m;
-	if (likely(n_mbufs < burst)) {
+	if (n_mbufs < burst) {
 		lp->rx.obuf[worker].n_mbufs = n_mbufs;
 		lp->pending = 1;
 		return;
@@ -246,7 +246,7 @@ tx_nic_pkts(struct io_lc_cfg *lp, uint32_t n_workers,
 			is_active = 1;
 			n_mbufs += n_pkts;
 
-			if (unlikely(n_mbufs < w_burst)) {
+			if (n_mbufs < w_burst) {
 				lp->pending = 1;
 				lp->tx.obuf[port].n_mbufs = n_mbufs;
 				continue;
@@ -260,7 +260,7 @@ tx_nic_pkts(struct io_lc_cfg *lp, uint32_t n_workers,
 			lp->tx.nic_pkts[port] += n_pkts;
 #endif
 
-			if (unlikely(n_pkts < n_mbufs)) {
+			if (n_pkts < n_mbufs) {
 				util_free_mbufs_burst(
 				    lp->tx.obuf[port].array + n_pkts,
 				    n_mbufs - n_pkts);
@@ -272,7 +272,7 @@ tx_nic_pkts(struct io_lc_cfg *lp, uint32_t n_workers,
 		if (cfg.ifaces[port].lacp) {
 			uint32_t n_pkts = 0;
 
-			FLUSH_TX_PORT(lp, port, n_pkts);
+			FLUSH_TX_PORT(lp, port);
 #ifdef APP_STATS
 			lp->tx.nic_pkts[port] += n_pkts;
 #endif
@@ -299,7 +299,10 @@ flush_tx_buffers(struct io_lc_cfg *lp)
 			lp->tx.obuf_flush[port] = 1;
 			continue;
 		}
-		FLUSH_TX_PORT(lp, port, n_pkts);
+		FLUSH_TX_PORT(lp, port);
+
+		LOG(DEBUG, USER1, "[TX] Sent %u packets\n", n_pkts);
+
 #ifdef APP_STATS
 		lp->tx.nic_pkts[port] += n_pkts;
 #endif
@@ -382,13 +385,14 @@ io_lcore_main_loop(__attribute__((unused)) void *arg)
 	for (;;) {
 		if (LCORE_IO_FLUSH && unlikely(i == LCORE_IO_FLUSH)) {
 			if (lp->pending) {
+				/* Pending may be reset by the flush handler */
+				lp->pending = 0;
 				if (likely(lp->rx.n_nic_queues > 0)) {
 					flush_rx_buffers(lp, n_wrks_rx);
 				}
 				if (likely(lp->tx.n_nic_ports > 0)) {
 					flush_tx_buffers(lp);
 				}
-				lp->pending = 0;
 			}
 			i = 0;
 		}
@@ -402,12 +406,12 @@ io_lcore_main_loop(__attribute__((unused)) void *arg)
 			}
 			stats = 0;
 		}
-		if (likely(lp->rx.n_nic_queues > 0)) {
+		if (lp->rx.n_nic_queues > 0) {
 			if (rx_nic_pkts(lp, n_wrks_rx, rx_r_burst, rx_w_burst)) {
 				idle = 0;
 			}
 		}
-		if (likely(lp->tx.n_nic_ports > 0)) {
+		if (lp->tx.n_nic_ports > 0) {
 			if (tx_nic_pkts(lp, n_wrks_tx, tx_r_burst, tx_w_burst)) {
 				idle = 0;
 			}
